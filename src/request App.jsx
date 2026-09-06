@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 import {
   LayoutGrid, CalendarDays, Users, MessageSquareText, Wrench,
-  Radio, Wallet, Building2, ChevronDown, Plus, X, Check
+  Radio, Wallet, Building2, ChevronDown, Plus, X, Check, Bell
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -151,7 +151,7 @@ function StatusPicker({ value, onChange }) {
   );
 }
 
-function NavItem({ icon: Icon, label, active, onClick }) {
+function NavItem({ icon: Icon, label, active, onClick, badge }) {
   return (
     <button
       onClick={onClick}
@@ -166,7 +166,15 @@ function NavItem({ icon: Icon, label, active, onClick }) {
       }}
     >
       <Icon size={17} strokeWidth={2} />
-      {label}
+      <span style={{ flex: 1 }}>{label}</span>
+      {badge ? (
+        <span style={{
+          background: C.signal, color: "#fff", fontSize: "11px", fontWeight: 600,
+          borderRadius: "999px", padding: "1px 7px", minWidth: "18px", textAlign: "center"
+        }}>
+          {badge}
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -273,6 +281,39 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [tapFlash, setTapFlash] = useState(null);
   const [generatedCode, setGeneratedCode] = useState(null);
   const [generatingId, setGeneratingId] = useState(null);
+  const [requests, setRequests] = useState([]);
+
+  useEffect(() => {
+    if (!providerName) return;
+
+    supabase
+      .from("service_requests")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .then(({ data }) => {
+        if (data) setRequests(data);
+      });
+
+    const channel = supabase
+      .channel("service_requests_live")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "service_requests" }, (payload) => {
+        setRequests((prev) => [payload.new, ...prev]);
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "service_requests" }, (payload) => {
+        setRequests((prev) => prev.map((r) => (r.id === payload.new.id ? payload.new : r)));
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providerName]);
+
+  async function markRequestHandled(id) {
+    setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: "handled" } : r)));
+    await supabase.from("service_requests").update({ status: "handled" }).eq("id", id);
+  }
 
   if (!providerName) return <Login onSignIn={setProviderName} onBack={onExit} />;
 
@@ -337,14 +378,18 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       invoice_amount: inv ? inv.amount : null,
       invoice_status: inv ? inv.status : null,
       expires_at: expiresAt,
+      branch_id: branchId,
     };
     const ok = await onGenerateCode(entry);
     setGeneratingId(null);
     if (ok) setGeneratedCode(entry);
   }
 
+  const newRequestCount = requests.filter((r) => r.status === "new").length;
+
   const NAV = [
     { id: "dashboard", label: "Dashboard", icon: LayoutGrid },
+    { id: "requests", label: "Requests", icon: Bell, badge: newRequestCount || null },
     { id: "bookings", label: "Bookings", icon: CalendarDays },
     { id: "clients", label: "Clients", icon: Users },
     { id: "inquiries", label: "Inquiries", icon: MessageSquareText },
@@ -367,7 +412,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
           {NAV.map((n) => (
-            <NavItem key={n.id} icon={n.icon} label={n.label} active={tab === n.id} onClick={() => setTab(n.id)} />
+            <NavItem key={n.id} icon={n.icon} label={n.label} active={tab === n.id} onClick={() => setTab(n.id)} badge={n.badge} />
           ))}
         </div>
         <div style={{ marginTop: "auto", padding: "12px 6px 0", borderTop: "1px solid rgba(255,255,255,0.12)" }}>
@@ -460,6 +505,40 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                 </Panel>
               </div>
             </div>
+          )}
+
+          {tab === "requests" && (
+            <Panel title="Guest requests">
+              <p style={{ fontSize: "13.5px", color: C.inkSoft, marginTop: 0, marginBottom: "18px" }}>
+                Live requests sent from the Guest portal — this list updates automatically, no refresh needed.
+              </p>
+              {requests.length === 0 ? (
+                <p style={{ fontSize: "13.5px", color: C.inkSoft }}>No requests yet. Try sending one from the Guest portal.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  {requests.map((r) => (
+                    <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px", border: `1px solid ${C.line}`, borderRadius: "9px" }}>
+                      <div>
+                        <div style={{ fontSize: "14px", fontWeight: 500 }}>{r.message}</div>
+                        <div style={{ fontSize: "12px", color: C.inkSoft, marginTop: "3px" }}>
+                          {new Date(r.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+                        </div>
+                      </div>
+                      {r.status === "handled" ? (
+                        <Pill tone="completed">handled</Pill>
+                      ) : (
+                        <button
+                          onClick={() => markRequestHandled(r.id)}
+                          style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}
+                        >
+                          Mark handled
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
           )}
 
           {tab === "bookings" && (
@@ -976,6 +1055,7 @@ function GuestApp({ onExit, initialCode }) {
   const [loading, setLoading] = useState(Boolean(initialCode));
   const [error, setError] = useState("");
   const [requestSent, setRequestSent] = useState(false);
+  const [requestSending, setRequestSending] = useState(false);
 
   useEffect(() => {
     if (initialCode) lookup(initialCode);
@@ -1087,15 +1167,24 @@ function GuestApp({ onExit, initialCode }) {
             <p style={{ fontSize: "13.5px", color: "#1E6E67", margin: 0 }}>Request sent — the front desk has been notified.</p>
           ) : (
             <button
-              disabled={isExpired}
-              onClick={() => setRequestSent(true)}
+              disabled={isExpired || requestSending}
+              onClick={async () => {
+                setRequestSending(true);
+                await supabase.from("service_requests").insert({
+                  code: access.code,
+                  guest_name: access.guest_name,
+                  message: `${access.guest_name} requested assistance (room: ${access.service_names})`,
+                });
+                setRequestSending(false);
+                setRequestSent(true);
+              }}
               style={{
                 width: "100%", padding: "10px", borderRadius: "8px", border: "none",
                 background: isExpired ? C.line : C.signal, color: isExpired ? C.inkSoft : "#fff",
-                fontSize: "14px", cursor: isExpired ? "default" : "pointer"
+                fontSize: "14px", cursor: isExpired ? "default" : "pointer", opacity: requestSending ? 0.7 : 1
               }}
             >
-              Request a service
+              {requestSending ? "Sending…" : "Request a service"}
             </button>
           )}
         </Panel>
