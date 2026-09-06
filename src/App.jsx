@@ -378,7 +378,6 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       invoice_amount: inv ? inv.amount : null,
       invoice_status: inv ? inv.status : null,
       expires_at: expiresAt,
-      branch_id: branchId,
     };
     const ok = await onGenerateCode(entry);
     setGeneratingId(null);
