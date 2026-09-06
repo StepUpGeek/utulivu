@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { supabase } from "./supabaseClient";
 import {
   LayoutGrid, CalendarDays, Users, MessageSquareText, Wrench,
   Radio, Wallet, Building2, ChevronDown, Plus, X, Check
@@ -92,18 +93,13 @@ const seedSubscribers = [
 ];
 const TIER_OPTIONS = ["Essentials", "Growth", "Full Suite"];
 
-/* Guest-portal seed data — temporary access codes, valid until 1 hour
-   after checkout. Each entry is a self-contained snapshot (not a
-   reference) so a demo code keeps working even if the underlying
-   booking data changes or resets. */
-const seedAccessCodes = [
-  { code: "UTU-2201", guestName: "Amara Ndosi", serviceNames: "Deluxe Room, Breakfast", checkIn: "2026-09-04", checkOut: "2026-09-07", status: "confirmed", invoiceAmount: 291000, invoiceStatus: "paid", expiresAt: "2026-09-07T12:00:00" },
-  { code: "UTU-5560", guestName: "Grace Mwakalinga", serviceNames: "Beach Bungalow, Sunset Cruise", checkIn: "2026-09-05", checkOut: "2026-09-09", status: "confirmed", invoiceAmount: 500000, invoiceStatus: "outstanding", expiresAt: "2026-09-09T13:00:00" },
-  { code: "UTU-0099", guestName: "James Okoth", serviceNames: "Deluxe Room, Airport Transfer", checkIn: "2026-08-18", checkOut: "2026-08-20", status: "completed", invoiceAmount: 195000, invoiceStatus: "outstanding", expiresAt: "2026-08-20T12:00:00" },
-];
+/* Guest access codes now live in Supabase (table: access_codes) —
+   see src/supabaseClient.js. This makes a code generated on one
+   device actually work when a guest enters it on a different device. */
 
 const INQUIRY_STAGES = ["new", "quoted", "confirmed", "completed"];
 const money = (n) => "TSh " + n.toLocaleString();
+
 
 /* ---------------------------------------------------------
    Small building blocks
@@ -276,6 +272,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [showAddClient, setShowAddClient] = useState(false);
   const [tapFlash, setTapFlash] = useState(null);
   const [generatedCode, setGeneratedCode] = useState(null);
+  const [generatingId, setGeneratingId] = useState(null);
 
   if (!providerName) return <Login onSignIn={setProviderName} onBack={onExit} />;
 
@@ -324,24 +321,26 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     setBookings((prev) => prev.map((bk) => (bk.id === id ? { ...bk, status } : bk)));
   }
 
-  function generateGuestCode(bk) {
+  async function generateGuestCode(bk) {
+    setGeneratingId(bk.id);
     const code = "UTU-" + Math.floor(1000 + Math.random() * 9000);
     const checkoutDate = bk.checkOut && bk.checkOut !== "TBC" ? bk.checkOut : new Date(Date.now() + 86400000).toISOString().slice(0, 10);
     const expiresAt = `${checkoutDate}T12:00:00`;
     const inv = invoices.find((v) => v.bookingId === bk.id);
     const entry = {
       code,
-      guestName: clientName(bk.clientId),
-      serviceNames: serviceNames(bk.serviceIds),
-      checkIn: bk.checkIn,
-      checkOut: bk.checkOut,
+      guest_name: clientName(bk.clientId),
+      service_names: serviceNames(bk.serviceIds),
+      check_in: bk.checkIn,
+      check_out: bk.checkOut,
       status: bk.status,
-      invoiceAmount: inv ? inv.amount : null,
-      invoiceStatus: inv ? inv.status : null,
-      expiresAt,
+      invoice_amount: inv ? inv.amount : null,
+      invoice_status: inv ? inv.status : null,
+      expires_at: expiresAt,
     };
-    onGenerateCode(entry);
-    setGeneratedCode(entry);
+    const ok = await onGenerateCode(entry);
+    setGeneratingId(null);
+    if (ok) setGeneratedCode(entry);
   }
 
   const NAV = [
@@ -492,9 +491,10 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                       <td>
                         <button
                           onClick={() => generateGuestCode(bk)}
-                          style={{ fontSize: "12.5px", border: `1px solid ${C.line}`, background: "none", borderRadius: "6px", padding: "5px 10px", cursor: "pointer", color: C.clayDeep }}
+                          disabled={generatingId === bk.id}
+                          style={{ fontSize: "12.5px", border: `1px solid ${C.line}`, background: "none", borderRadius: "6px", padding: "5px 10px", cursor: generatingId === bk.id ? "default" : "pointer", color: C.clayDeep, opacity: generatingId === bk.id ? 0.6 : 1 }}
                         >
-                          Generate code
+                          {generatingId === bk.id ? "Generating…" : "Generate code"}
                         </button>
                       </td>
                     </tr>
@@ -835,7 +835,7 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
 --------------------------------------------------------- */
 function GeneratedCodeModal({ entry, onClose, onOpenGuest }) {
   const [copied, setCopied] = useState(false);
-  const expiresLabel = new Date(entry.expiresAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  const expiresLabel = new Date(entry.expires_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 
   function copy() {
     try {
@@ -970,24 +970,36 @@ function OperatorApp({ onExit }) {
    just a temporary access code that expires 1 hour after
    the linked booking's checkout.
 --------------------------------------------------------- */
-function GuestApp({ onExit, accessCodes, initialCode }) {
+function GuestApp({ onExit, initialCode }) {
   const [codeInput, setCodeInput] = useState(initialCode || "");
-  const [session, setSession] = useState(() => {
-    if (!initialCode) return null;
-    const access = accessCodes.find((a) => a.code.toLowerCase() === initialCode.toLowerCase());
-    return access ? { access } : null;
-  });
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(Boolean(initialCode));
   const [error, setError] = useState("");
   const [requestSent, setRequestSent] = useState(false);
 
-  function enter() {
-    const access = accessCodes.find((a) => a.code.toLowerCase() === codeInput.trim().toLowerCase());
-    if (!access) {
+  useEffect(() => {
+    if (initialCode) lookup(initialCode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function lookup(rawCode) {
+    setLoading(true);
+    setError("");
+    const { data, error: qErr } = await supabase
+      .from("access_codes")
+      .select("*")
+      .ilike("code", rawCode.trim())
+      .maybeSingle();
+    setLoading(false);
+    if (qErr || !data) {
       setError("That access code wasn't recognized. Check the code from your booking confirmation.");
       return;
     }
-    setError("");
-    setSession({ access });
+    setSession({ access: data });
+  }
+
+  function enter() {
+    lookup(codeInput);
   }
 
   if (!session) {
@@ -1009,8 +1021,8 @@ function GuestApp({ onExit, accessCodes, initialCode }) {
             style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${C.line}`, marginBottom: "12px", fontSize: "14px", boxSizing: "border-box" }}
           />
           {error && <p style={{ color: C.red, fontSize: "12.5px", margin: "0 0 12px" }}>{error}</p>}
-          <button onClick={enter} style={{ width: "100%", padding: "11px", borderRadius: "8px", border: "none", background: C.ink, color: "#fff", fontSize: "14.5px", fontWeight: 500, cursor: "pointer" }}>
-            Access my stay
+          <button onClick={enter} disabled={loading} style={{ width: "100%", padding: "11px", borderRadius: "8px", border: "none", background: C.ink, color: "#fff", fontSize: "14.5px", fontWeight: 500, cursor: loading ? "default" : "pointer", opacity: loading ? 0.7 : 1 }}>
+            {loading ? "Checking…" : "Access my stay"}
           </button>
           <p style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "12px" }}>Try: UTU-2201, UTU-5560, or UTU-0099 (expired demo) — or generate a fresh one from the Provider portal's Bookings tab.</p>
           {onExit && (
@@ -1024,8 +1036,8 @@ function GuestApp({ onExit, accessCodes, initialCode }) {
   }
 
   const { access } = session;
-  const isExpired = Date.now() > new Date(access.expiresAt).getTime();
-  const expiresLabel = new Date(access.expiresAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  const isExpired = Date.now() > new Date(access.expires_at).getTime();
+  const expiresLabel = new Date(access.expires_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 
   return (
     <div className="ws" style={{ minHeight: "560px", background: C.paper, display: "flex", justifyContent: "center", padding: "36px 20px" }}>
@@ -1049,8 +1061,8 @@ function GuestApp({ onExit, accessCodes, initialCode }) {
 
         <Panel title="Booking">
           <div style={{ fontSize: "14px", lineHeight: 1.8 }}>
-            <div><strong>{access.serviceNames}</strong></div>
-            <div style={{ color: C.inkSoft }}>{access.checkIn} → {access.checkOut}</div>
+            <div><strong>{access.service_names}</strong></div>
+            <div style={{ color: C.inkSoft }}>{access.check_in} → {access.check_out}</div>
             <div style={{ marginTop: "6px" }}><Pill tone={access.status}>{access.status}</Pill></div>
           </div>
         </Panel>
@@ -1058,10 +1070,10 @@ function GuestApp({ onExit, accessCodes, initialCode }) {
         <div style={{ height: "14px" }} />
 
         <Panel title="Invoice">
-          {access.invoiceAmount != null ? (
+          {access.invoice_amount != null ? (
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "14px" }}>
-              <span>{money(access.invoiceAmount)}</span>
-              <Pill tone={access.invoiceStatus}>{access.invoiceStatus}</Pill>
+              <span>{money(access.invoice_amount)}</span>
+              <Pill tone={access.invoice_status}>{access.invoice_status}</Pill>
             </div>
           ) : (
             <span style={{ fontSize: "13.5px", color: C.inkSoft }}>No invoice on file yet.</span>
@@ -1152,12 +1164,16 @@ function PortalGate({ onSelect, onReset }) {
 --------------------------------------------------------- */
 export default function App() {
   const [portal, setPortal] = useState(null);
-  const [accessCodes, setAccessCodes] = useState(seedAccessCodes);
   const [prefillGuestCode, setPrefillGuestCode] = useState("");
   const [resetKey, setResetKey] = useState(0);
 
-  function addAccessCode(entry) {
-    setAccessCodes((prev) => [...prev, entry]);
+  async function addAccessCode(entry) {
+    const { error } = await supabase.from("access_codes").insert(entry);
+    if (error) {
+      console.error("Could not save guest access code:", error.message);
+      return false;
+    }
+    return true;
   }
 
   function jumpToGuest(code) {
@@ -1166,7 +1182,6 @@ export default function App() {
   }
 
   function resetDemo() {
-    setAccessCodes(seedAccessCodes);
     setPrefillGuestCode("");
     setPortal(null);
     setResetKey((k) => k + 1); // forces provider/operator to remount with fresh seed state
@@ -1174,6 +1189,6 @@ export default function App() {
 
   if (!portal) return <PortalGate onSelect={setPortal} onReset={resetDemo} />;
   if (portal === "operator") return <OperatorApp key={resetKey} onExit={() => setPortal(null)} />;
-  if (portal === "guest") return <GuestApp onExit={() => setPortal(null)} accessCodes={accessCodes} initialCode={prefillGuestCode} />;
+  if (portal === "guest") return <GuestApp onExit={() => setPortal(null)} initialCode={prefillGuestCode} />;
   return <ProviderApp key={resetKey} onExit={() => setPortal(null)} onGenerateCode={addAccessCode} onJumpToGuest={jumpToGuest} />;
 }
