@@ -39,61 +39,24 @@ const FONTS = (
 );
 
 /* ---------------------------------------------------------
-   Seed data — one provider, two branches
+   Branches, clients, services, bookings, invoices, inquiries,
+   and tags now live in Supabase. These mapper functions convert
+   a DB row (snake_case) into the camelCase shape the rest of
+   this file already works with, so the UI code below didn't
+   need to change.
 --------------------------------------------------------- */
-const seedBranches = [
-  { id: "b1", name: "Kilimani House", location: "Msasani, Dar es Salaam" },
-  { id: "b2", name: "Kilimani Beach Annex", location: "Coco Beach, Dar es Salaam" },
-];
+const mapBranch = (r) => ({ id: r.id, name: r.name, location: r.location });
+const mapClient = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, phone: r.phone });
+const mapService = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, price: r.price, category: r.category });
+const mapBooking = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, serviceIds: r.service_ids || [], checkIn: r.check_in, checkOut: r.check_out, status: r.status });
+const mapInvoice = (r) => ({ id: r.id, branchId: r.branch_id, bookingId: r.booking_id, amount: r.amount, status: r.status });
+const mapInquiry = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, message: r.message, status: r.status });
+const mapTag = (r) => ({ id: r.id, branchId: r.branch_id, label: r.label, type: r.type, linkedName: r.linked_name, lastScan: r.last_scan });
+const mapSubscriber = (r) => ({ id: r.id, name: r.name, tier: r.tier, branches: r.branches, activeBookings: r.active_bookings, subStatus: r.sub_status, mrr: r.mrr });
 
-const seedClients = [
-  { id: "c1", branchId: "b1", name: "Amara Ndosi", phone: "+255 754 112 233" },
-  { id: "c2", branchId: "b1", name: "James Okoth", phone: "+255 712 445 998" },
-  { id: "c3", branchId: "b2", name: "Grace Mwakalinga", phone: "+255 786 220 014" },
-];
-
-const seedServices = [
-  { id: "s1", branchId: "b1", name: "Deluxe Room", price: 85000, category: "Room" },
-  { id: "s2", branchId: "b1", name: "Airport Transfer", price: 25000, category: "Transport" },
-  { id: "s3", branchId: "b1", name: "Breakfast", price: 12000, category: "Dining" },
-  { id: "s4", branchId: "b2", name: "Beach Bungalow", price: 110000, category: "Room" },
-  { id: "s5", branchId: "b2", name: "Sunset Cruise", price: 60000, category: "Excursion" },
-];
-
-const seedBookings = [
-  { id: "bk1", branchId: "b1", clientId: "c1", serviceIds: ["s1", "s3"], checkIn: "2026-09-04", checkOut: "2026-09-07", status: "confirmed" },
-  { id: "bk2", branchId: "b1", clientId: "c2", serviceIds: ["s1", "s2"], checkIn: "2026-09-10", checkOut: "2026-09-12", status: "pending" },
-  { id: "bk3", branchId: "b2", clientId: "c3", serviceIds: ["s4", "s5"], checkIn: "2026-09-05", checkOut: "2026-09-09", status: "confirmed" },
-];
-
-const seedInquiries = [
-  { id: "i1", branchId: "b1", clientId: "c1", message: "Extra towels for room 4", status: "new" },
-  { id: "i2", branchId: "b1", clientId: "c2", message: "Late checkout request", status: "quoted" },
-  { id: "i3", branchId: "b2", clientId: "c3", message: "Vegetarian dinner option", status: "completed" },
-];
-
-const seedTags = [
-  { id: "t1", branchId: "b1", label: "Room 4 door", type: "Room", linkedName: "Deluxe Room · Amara Ndosi", lastScan: null },
-  { id: "t2", branchId: "b1", label: "Reception desk", type: "Service request", linkedName: "Front desk inquiry line", lastScan: null },
-  { id: "t3", branchId: "b2", label: "Bungalow 2 door", type: "Room", linkedName: "Beach Bungalow · Grace Mwakalinga", lastScan: null },
-];
-
-const seedInvoices = [
-  { id: "v1", branchId: "b1", bookingId: "bk1", amount: 291000, status: "paid" },
-  { id: "v2", branchId: "b1", bookingId: "bk2", amount: 195000, status: "outstanding" },
-  { id: "v3", branchId: "b2", bookingId: "bk3", amount: 500000, status: "outstanding" },
-];
-
-/* Operator-portal seed data — Utulivu's own subscriber book */
-const seedSubscribers = [
-  { id: "p1", name: "Kilimani House Hospitality", tier: "Growth", branches: 2, activeBookings: 3, subStatus: "active", mrr: 180000 },
-  { id: "p2", name: "Serengeti Trails Lodge", tier: "Full Suite", branches: 4, activeBookings: 11, subStatus: "active", mrr: 420000 },
-  { id: "p3", name: "Zanzibar Tide Rooms", tier: "Essentials", branches: 1, activeBookings: 2, subStatus: "trial", mrr: 60000 },
-  { id: "p4", name: "Arusha Peak Retreat", tier: "Growth", branches: 2, activeBookings: 0, subStatus: "overdue", mrr: 180000 },
-];
 const TIER_OPTIONS = ["Essentials", "Growth", "Full Suite"];
 
-/* Guest access codes now live in Supabase (table: access_codes) —
+/* Guest access codes and service requests also live in Supabase —
    see src/supabaseClient.js. This makes a code generated on one
    device actually work when a guest enters it on a different device. */
 
@@ -264,16 +227,17 @@ function Login({ onSignIn, onBack }) {
 --------------------------------------------------------- */
 function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [providerName, setProviderName] = useState(null);
-  const [branches] = useState(seedBranches);
-  const [branchId, setBranchId] = useState(seedBranches[0].id);
+  const [branches, setBranches] = useState([]);
+  const [branchId, setBranchId] = useState(null);
   const [tab, setTab] = useState("dashboard");
 
-  const [clients, setClients] = useState(seedClients);
-  const [services] = useState(seedServices);
-  const [bookings, setBookings] = useState(seedBookings);
-  const [inquiries, setInquiries] = useState(seedInquiries);
-  const [tags, setTags] = useState(seedTags);
-  const [invoices] = useState(seedInvoices);
+  const [clients, setClients] = useState([]);
+  const [services, setServices] = useState([]);
+  const [bookings, setBookings] = useState([]);
+  const [inquiries, setInquiries] = useState([]);
+  const [tags, setTags] = useState([]);
+  const [invoices, setInvoices] = useState([]);
+  const [dataLoading, setDataLoading] = useState(true);
 
   const [showBranchMenu, setShowBranchMenu] = useState(false);
   const [showAddBooking, setShowAddBooking] = useState(false);
@@ -286,6 +250,28 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   useEffect(() => {
     if (!providerName) return;
 
+    Promise.all([
+      supabase.from("branches").select("*"),
+      supabase.from("clients").select("*"),
+      supabase.from("services").select("*"),
+      supabase.from("bookings").select("*"),
+      supabase.from("invoices").select("*"),
+      supabase.from("inquiries").select("*"),
+      supabase.from("tags").select("*"),
+    ]).then(([b, c, s, bk, inv, iq, t]) => {
+      if (b.data) {
+        setBranches(b.data.map(mapBranch));
+        if (b.data[0]) setBranchId(b.data[0].id);
+      }
+      if (c.data) setClients(c.data.map(mapClient));
+      if (s.data) setServices(s.data.map(mapService));
+      if (bk.data) setBookings(bk.data.map(mapBooking));
+      if (inv.data) setInvoices(inv.data.map(mapInvoice));
+      if (iq.data) setInquiries(iq.data.map(mapInquiry));
+      if (t.data) setTags(t.data.map(mapTag));
+      setDataLoading(false);
+    });
+
     supabase
       .from("service_requests")
       .select("*")
@@ -294,7 +280,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         if (data) setRequests(data);
       });
 
-    const channel = supabase
+    const requestsChannel = supabase
       .channel("service_requests_live")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "service_requests" }, (payload) => {
         setRequests((prev) => [payload.new, ...prev]);
@@ -304,8 +290,19 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       })
       .subscribe();
 
+    const bookingsChannel = supabase
+      .channel("bookings_live")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "bookings" }, (payload) => {
+        setBookings((prev) => (prev.some((bk) => bk.id === payload.new.id) ? prev : [...prev, mapBooking(payload.new)]));
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "bookings" }, (payload) => {
+        setBookings((prev) => prev.map((bk) => (bk.id === payload.new.id ? mapBooking(payload.new) : bk)));
+      })
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(requestsChannel);
+      supabase.removeChannel(bookingsChannel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerName]);
@@ -316,6 +313,14 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   }
 
   if (!providerName) return <Login onSignIn={setProviderName} onBack={onExit} />;
+  if (dataLoading || !branchId) {
+    return (
+      <div style={{ minHeight: "560px", display: "flex", alignItems: "center", justifyContent: "center", background: C.paper, color: C.inkSoft }}>
+        {FONTS}
+        <p className="ws">Loading…</p>
+      </div>
+    );
+  }
 
   const branch = branches.find((b) => b.id === branchId);
   const inBranch = (arr) => arr.filter((x) => x.branchId === branchId);
@@ -332,34 +337,33 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const revenue = bInvoices.filter((v) => v.status === "paid").reduce((sum, v) => sum + v.amount, 0);
   const outstanding = bInvoices.filter((v) => v.status === "outstanding").reduce((sum, v) => sum + v.amount, 0);
 
-  function simulateTap(tagId) {
+  async function simulateTap(tagId) {
     const tag = tags.find((t) => t.id === tagId);
     if (!tag) return;
     const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     setTags((prev) => prev.map((t) => (t.id === tagId ? { ...t, lastScan: stamp } : t)));
     setTapFlash(tagId);
     setTimeout(() => setTapFlash(null), 1000);
+    await supabase.from("tags").update({ last_scan: stamp }).eq("id", tagId);
     if (tag.type === "Service request") {
-      setInquiries((prev) => [
-        { id: "i" + Date.now(), branchId: tag.branchId, clientId: bClients[0]?.id || "c1", message: "Tap request from " + tag.label, status: "new" },
-        ...prev,
-      ]);
+      const newInquiry = { branch_id: tag.branchId, client_id: bClients[0]?.id || null, message: "Tap request from " + tag.label, status: "new" };
+      const { data } = await supabase.from("inquiries").insert(newInquiry).select().single();
+      if (data) setInquiries((prev) => [mapInquiry(data), ...prev]);
     }
   }
 
-  function moveInquiry(id, dir) {
-    setInquiries((prev) =>
-      prev.map((iq) => {
-        if (iq.id !== id) return iq;
-        const idx = INQUIRY_STAGES.indexOf(iq.status);
-        const next = INQUIRY_STAGES[Math.min(Math.max(idx + dir, 0), INQUIRY_STAGES.length - 1)];
-        return { ...iq, status: next };
-      })
-    );
+  async function moveInquiry(id, dir) {
+    const iq = inquiries.find((x) => x.id === id);
+    if (!iq) return;
+    const idx = INQUIRY_STAGES.indexOf(iq.status);
+    const next = INQUIRY_STAGES[Math.min(Math.max(idx + dir, 0), INQUIRY_STAGES.length - 1)];
+    setInquiries((prev) => prev.map((x) => (x.id === id ? { ...x, status: next } : x)));
+    await supabase.from("inquiries").update({ status: next }).eq("id", id);
   }
 
-  function updateBookingStatus(id, status) {
+  async function updateBookingStatus(id, status) {
     setBookings((prev) => prev.map((bk) => (bk.id === id ? { ...bk, status } : bk)));
+    await supabase.from("bookings").update({ status }).eq("id", id);
   }
 
   async function generateGuestCode(bk) {
@@ -724,13 +728,31 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           clients={bClients}
           services={bServices}
           onClose={() => setShowAddBooking(false)}
-          onAddClient={(newClient) => {
-            const client = { ...newClient, id: "c" + Date.now(), branchId };
+          onAddClient={async (newClient) => {
+            const { data, error } = await supabase
+              .from("clients")
+              .insert({ branch_id: branchId, name: newClient.name, phone: newClient.phone })
+              .select()
+              .single();
+            if (error || !data) return null;
+            const client = mapClient(data);
             setClients((prev) => [...prev, client]);
             return client;
           }}
-          onSave={(newBooking) => {
-            setBookings((prev) => [...prev, { ...newBooking, id: "bk" + Date.now(), branchId }]);
+          onSave={async (newBooking) => {
+            const { data, error } = await supabase
+              .from("bookings")
+              .insert({
+                branch_id: branchId,
+                client_id: newBooking.clientId,
+                service_ids: newBooking.serviceIds,
+                check_in: newBooking.checkIn,
+                check_out: newBooking.checkOut,
+                status: newBooking.status,
+              })
+              .select()
+              .single();
+            if (data) setBookings((prev) => [...prev, mapBooking(data)]);
             setShowAddBooking(false);
           }}
         />
@@ -740,8 +762,13 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       {showAddClient && (
         <AddClientModal
           onClose={() => setShowAddClient(false)}
-          onSave={(newClient) => {
-            setClients((prev) => [...prev, { ...newClient, id: "c" + Date.now(), branchId }]);
+          onSave={async (newClient) => {
+            const { data, error } = await supabase
+              .from("clients")
+              .insert({ branch_id: branchId, name: newClient.name, phone: newClient.phone })
+              .select()
+              .single();
+            if (data) setClients((prev) => [...prev, mapClient(data)]);
             setShowAddClient(false);
           }}
         />
@@ -766,6 +793,13 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 function AddClientModal({ onClose, onSave }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    setSaving(true);
+    await onSave({ name: name.trim(), phone: phone.trim() || "—" });
+    setSaving(false);
+  }
 
   return (
     <div style={{
@@ -795,15 +829,16 @@ function AddClientModal({ onClose, onSave }) {
         />
 
         <button
-          disabled={!name.trim()}
-          onClick={() => onSave({ name: name.trim(), phone: phone.trim() || "—" })}
+          disabled={!name.trim() || saving}
+          onClick={handleSave}
           style={{
             width: "100%", background: name.trim() ? C.ink : C.line, color: name.trim() ? "#fff" : C.inkSoft,
             border: "none", borderRadius: "8px", padding: "11px", fontSize: "14.5px",
-            cursor: name.trim() ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px"
+            cursor: name.trim() && !saving ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
+            opacity: saving ? 0.7 : 1
           }}
         >
-          <Check size={16} /> Save client
+          <Check size={16} /> {saving ? "Saving…" : "Save client"}
         </button>
       </div>
     </div>
@@ -824,13 +859,18 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
   const isNewClient = clientId === "__new__";
   const canSave = isNewClient ? newName.trim().length > 0 : Boolean(clientId);
 
-  function handleSave() {
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    setSaving(true);
     let finalClientId = clientId;
     if (isNewClient) {
-      const created = onAddClient({ name: newName.trim(), phone: newPhone.trim() || "—" });
+      const created = await onAddClient({ name: newName.trim(), phone: newPhone.trim() || "—" });
+      if (!created) { setSaving(false); return; }
       finalClientId = created.id;
     }
-    onSave({ clientId: finalClientId, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC", status: "pending" });
+    await onSave({ clientId: finalClientId, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC", status: "pending" });
+    setSaving(false);
   }
 
   return (
@@ -891,15 +931,16 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
         </div>
 
         <button
-          disabled={!canSave}
+          disabled={!canSave || saving}
           onClick={handleSave}
           style={{
             width: "100%", background: canSave ? C.ink : C.line, color: canSave ? "#fff" : C.inkSoft,
             border: "none", borderRadius: "8px", padding: "11px", fontSize: "14.5px",
-            cursor: canSave ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px"
+            cursor: canSave && !saving ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
+            opacity: saving ? 0.7 : 1
           }}
         >
-          <Check size={16} /> Save booking
+          <Check size={16} /> {saving ? "Saving…" : "Save booking"}
         </button>
       </div>
     </div>
@@ -952,14 +993,26 @@ function GeneratedCodeModal({ entry, onClose, onOpenGuest }) {
    Operator portal — Utulivu's own view across all subscribers
 --------------------------------------------------------- */
 function OperatorApp({ onExit }) {
-  const [subscribers, setSubscribers] = useState(seedSubscribers);
+  const [subscribers, setSubscribers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    supabase
+      .from("subscribers")
+      .select("*")
+      .then(({ data }) => {
+        if (data) setSubscribers(data.map(mapSubscriber));
+        setLoading(false);
+      });
+  }, []);
 
   const totalMrr = subscribers.reduce((sum, p) => sum + p.mrr, 0);
   const activeCount = subscribers.filter((p) => p.subStatus === "active").length;
   const totalBranches = subscribers.reduce((sum, p) => sum + p.branches, 0);
 
-  function updateTier(id, tier) {
+  async function updateTier(id, tier) {
     setSubscribers((prev) => prev.map((p) => (p.id === id ? { ...p, tier } : p)));
+    await supabase.from("subscribers").update({ tier }).eq("id", id);
   }
 
   const subTones = {
@@ -967,6 +1020,15 @@ function OperatorApp({ onExit }) {
     trial: { bg: "#E4E9F3", fg: "#3A4E8A" },
     overdue: { bg: "#F3DEDE", fg: C.red },
   };
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: "640px", display: "flex", alignItems: "center", justifyContent: "center", background: C.paper, color: C.inkSoft }}>
+        {FONTS}
+        <p className="ws">Loading…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="ws" style={{ minHeight: "640px", background: C.paper, color: C.ink, padding: "28px 32px" }}>
