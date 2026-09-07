@@ -374,6 +374,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     const inv = invoices.find((v) => v.bookingId === bk.id);
     const entry = {
       code,
+      branch_id: branchId,
       guest_name: clientName(bk.clientId),
       service_names: serviceNames(bk.serviceIds),
       check_in: bk.checkIn,
@@ -1120,11 +1121,40 @@ function GuestApp({ onExit, initialCode }) {
   const [airtimeAmount, setAirtimeAmount] = useState("");
   const [airtimeSending, setAirtimeSending] = useState(false);
   const [airtimeSent, setAirtimeSent] = useState(false);
+  const [amenities, setAmenities] = useState([]);
+  const [amenitiesLoading, setAmenitiesLoading] = useState(false);
+  const [requestedIds, setRequestedIds] = useState([]);
+  const [sendingId, setSendingId] = useState(null);
 
   useEffect(() => {
     if (initialCode) lookup(initialCode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!session?.access?.branch_id) return;
+    setAmenitiesLoading(true);
+    supabase
+      .from("services")
+      .select("*")
+      .eq("branch_id", session.access.branch_id)
+      .eq("category", "Amenities")
+      .then(({ data }) => {
+        if (data) setAmenities(data);
+        setAmenitiesLoading(false);
+      });
+  }, [session]);
+
+  async function requestAmenity(item) {
+    setSendingId(item.id);
+    await supabase.from("service_requests").insert({
+      code: session.access.code,
+      guest_name: session.access.guest_name,
+      message: `${session.access.guest_name} requested ${item.name} (TSh ${Number(item.price).toLocaleString()})`,
+    });
+    setSendingId(null);
+    setRequestedIds((prev) => [...prev, item.id]);
+  }
 
   async function lookup(rawCode) {
     setLoading(true);
@@ -1225,6 +1255,45 @@ function GuestApp({ onExit, initialCode }) {
         </Panel>
 
         <div style={{ height: "14px" }} />
+
+        {amenities.length > 0 && (
+          <>
+            <Panel title="Amenities">
+              <p style={{ fontSize: "13px", color: C.inkSoft, marginTop: 0, marginBottom: "14px" }}>
+                Tap to request any item — the front desk will bring it to you.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {amenities.map((item) => {
+                  const requested = requestedIds.includes(item.id);
+                  return (
+                    <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
+                      <div>
+                        <div style={{ fontSize: "13.5px", fontWeight: 500 }}>{item.name}</div>
+                        <div style={{ fontSize: "12px", color: C.inkSoft }}>TSh {Number(item.price).toLocaleString()}</div>
+                      </div>
+                      {requested ? (
+                        <span style={{ fontSize: "12.5px", color: "#1E6E67", fontWeight: 500 }}>Requested</span>
+                      ) : (
+                        <button
+                          disabled={isExpired || sendingId === item.id}
+                          onClick={() => requestAmenity(item)}
+                          style={{
+                            fontSize: "12.5px", border: "none", borderRadius: "6px", padding: "6px 12px",
+                            background: isExpired ? C.line : C.clay, color: isExpired ? C.inkSoft : "#fff",
+                            cursor: isExpired ? "default" : "pointer", opacity: sendingId === item.id ? 0.7 : 1
+                          }}
+                        >
+                          {sendingId === item.id ? "Sending…" : "Request"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </Panel>
+            <div style={{ height: "14px" }} />
+          </>
+        )}
 
         <Panel title="Need something?">
           <div style={{ marginBottom: "16px", paddingBottom: "16px", borderBottom: `1px solid ${C.line}` }}>
