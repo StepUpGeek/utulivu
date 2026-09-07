@@ -883,7 +883,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       {showAddBooking && (
         <AddBookingModal
           clients={bClients}
-          services={bServices}
+          services={bServices.filter((s) => s.category !== "Amenities")}
           onClose={() => setShowAddBooking(false)}
           onAddClient={async (newClient) => {
             const payload = { branch_id: branchId, name: newClient.name, phone: newClient.phone };
@@ -1018,26 +1018,33 @@ function AddClientModal({ onClose, onSave }) {
 }
 
 function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
-  const [clientId, setClientId] = useState(clients[0]?.id || "__new__");
-  const [newName, setNewName] = useState("");
-  const [newPhone, setNewPhone] = useState("");
+  const [clientQuery, setClientQuery] = useState("");
+  const [phone, setPhone] = useState("");
   const [serviceIds, setServiceIds] = useState([]);
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const matchedClient = clients.find((c) => c.name.trim().toLowerCase() === clientQuery.trim().toLowerCase());
+
+  function handleQueryChange(value) {
+    setClientQuery(value);
+    const match = clients.find((c) => c.name.trim().toLowerCase() === value.trim().toLowerCase());
+    setPhone(match ? (match.phone === "—" ? "" : match.phone) : "");
+  }
 
   const toggleService = (id) =>
     setServiceIds((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
 
-  const isNewClient = clientId === "__new__";
-  const canSave = isNewClient ? newName.trim().length > 0 : Boolean(clientId);
-
-  const [saving, setSaving] = useState(false);
+  const canSave = clientQuery.trim().length > 0;
 
   async function handleSave() {
     setSaving(true);
-    let finalClientId = clientId;
-    if (isNewClient) {
-      const created = await onAddClient({ name: newName.trim(), phone: newPhone.trim() || "—" });
+    let finalClientId;
+    if (matchedClient) {
+      finalClientId = matchedClient.id;
+    } else {
+      const created = await onAddClient({ name: clientQuery.trim(), phone: phone.trim() || "—" });
       if (!created) { setSaving(false); return; }
       finalClientId = created.id;
     }
@@ -1056,30 +1063,29 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={18} /></button>
         </div>
 
-        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Client</label>
-        <select value={clientId} onChange={(e) => setClientId(e.target.value)} style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px" }}>
-          {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          <option value="__new__">+ New client…</option>
-        </select>
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Client name</label>
+        <input
+          list="client-name-options"
+          value={clientQuery}
+          onChange={(e) => handleQueryChange(e.target.value)}
+          placeholder="Start typing a name…"
+          autoFocus
+          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 10px", fontSize: "14px", boxSizing: "border-box" }}
+        />
+        <datalist id="client-name-options">
+          {clients.map((c) => <option key={c.id} value={c.name} />)}
+        </datalist>
 
-        {isNewClient && (
-          <div style={{ border: `1px dashed ${C.line}`, borderRadius: "8px", padding: "12px", marginBottom: "14px" }}>
-            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Full name</label>
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="e.g. Halima Juma"
-              style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 10px", fontSize: "13.5px", boxSizing: "border-box" }}
-            />
-            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Phone number</label>
-            <input
-              value={newPhone}
-              onChange={(e) => setNewPhone(e.target.value)}
-              placeholder="e.g. +255 7XX XXX XXX"
-              style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 0", fontSize: "13.5px", boxSizing: "border-box" }}
-            />
-          </div>
-        )}
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Phone number</label>
+        <input
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="e.g. +255 7XX XXX XXX"
+          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 4px", fontSize: "14px", boxSizing: "border-box" }}
+        />
+        <p style={{ fontSize: "12px", color: C.inkSoft, margin: "0 0 14px" }}>
+          {matchedClient ? "Existing client" : clientQuery.trim() ? "New client — will be added" : ""}
+        </p>
 
         <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Services</label>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px", margin: "6px 0 14px" }}>
