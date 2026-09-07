@@ -1117,6 +1117,9 @@ function GuestApp({ onExit, initialCode }) {
   const [error, setError] = useState("");
   const [requestSent, setRequestSent] = useState(false);
   const [requestSending, setRequestSending] = useState(false);
+  const [airtimeAmount, setAirtimeAmount] = useState("");
+  const [airtimeSending, setAirtimeSending] = useState(false);
+  const [airtimeSent, setAirtimeSent] = useState(false);
 
   useEffect(() => {
     if (initialCode) lookup(initialCode);
@@ -1224,6 +1227,45 @@ function GuestApp({ onExit, initialCode }) {
         <div style={{ height: "14px" }} />
 
         <Panel title="Need something?">
+          <div style={{ marginBottom: "16px", paddingBottom: "16px", borderBottom: `1px solid ${C.line}` }}>
+            <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px", color: C.ink }}>Airtime top-up</p>
+            {airtimeSent ? (
+              <p style={{ fontSize: "13.5px", color: "#1E6E67", margin: 0 }}>Request sent for TSh {Number(airtimeAmount).toLocaleString()} — front desk notified.</p>
+            ) : (
+              <div style={{ display: "flex", gap: "8px" }}>
+                <input
+                  type="number"
+                  min="0"
+                  value={airtimeAmount}
+                  onChange={(e) => setAirtimeAmount(e.target.value)}
+                  placeholder="Amount in TSh"
+                  disabled={isExpired || airtimeSending}
+                  style={{ flex: 1, padding: "9px 10px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13.5px", boxSizing: "border-box" }}
+                />
+                <button
+                  disabled={isExpired || airtimeSending || !airtimeAmount || Number(airtimeAmount) <= 0}
+                  onClick={async () => {
+                    setAirtimeSending(true);
+                    await supabase.from("service_requests").insert({
+                      code: access.code,
+                      guest_name: access.guest_name,
+                      message: `${access.guest_name} requested airtime top-up: TSh ${Number(airtimeAmount).toLocaleString()}`,
+                    });
+                    setAirtimeSending(false);
+                    setAirtimeSent(true);
+                  }}
+                  style={{
+                    padding: "9px 14px", borderRadius: "7px", border: "none", fontSize: "13.5px", whiteSpace: "nowrap",
+                    background: isExpired ? C.line : C.clay, color: isExpired ? C.inkSoft : "#fff",
+                    cursor: isExpired ? "default" : "pointer", opacity: airtimeSending ? 0.7 : 1
+                  }}
+                >
+                  {airtimeSending ? "Sending…" : "Request"}
+                </button>
+              </div>
+            )}
+          </div>
+
           {requestSent ? (
             <p style={{ fontSize: "13.5px", color: "#1E6E67", margin: 0 }}>Request sent — the front desk has been notified.</p>
           ) : (
