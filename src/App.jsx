@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
+import { saveCache, loadCache, getQueue, enqueueAction, removeFromQueue, queueCount } from "./offlineStore";
 import {
   LayoutGrid, CalendarDays, Users, MessageSquareText, Wrench,
   Radio, Wallet, Building2, ChevronDown, Plus, X, Check, Bell
@@ -67,6 +68,28 @@ const money = (n) => "TSh " + n.toLocaleString();
 /* ---------------------------------------------------------
    Small building blocks
 --------------------------------------------------------- */
+function ConnectionBadge({ isOnline, usingCache, syncing, pendingCount }) {
+  let label, bg, fg;
+  if (syncing) {
+    label = "Syncing…";
+    bg = "#E4E9F3"; fg = "#3A4E8A";
+  } else if (!isOnline) {
+    label = pendingCount > 0 ? `Offline · ${pendingCount} to sync` : "Offline";
+    bg = "#F3DEDE"; fg = "#B24C4C";
+  } else if (usingCache || pendingCount > 0) {
+    label = `Online · ${pendingCount} pending`;
+    bg = "#F3E7CE"; fg = "#8A6A1E";
+  } else {
+    label = "Online";
+    bg = "#DCEFEC"; fg = "#1E6E67";
+  }
+  return (
+    <span className="ws" style={{ background: bg, color: fg, fontSize: "12px", fontWeight: 500, padding: "5px 11px", borderRadius: "999px", whiteSpace: "nowrap" }}>
+      {label}
+    </span>
+  );
+}
+
 function Pill({ tone = "default", children }) {
   const tones = {
     default: { bg: C.line, fg: C.inkSoft },
@@ -246,31 +269,126 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [generatedCode, setGeneratedCode] = useState(null);
   const [generatingId, setGeneratingId] = useState(null);
   const [requests, setRequests] = useState([]);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [usingCache, setUsingCache] = useState(false);
+  const [pendingCount, setPendingCount] = useState(queueCount());
+  const [syncing, setSyncing] = useState(false);
+
+  function applyFetchedData(b, c, s, bk, inv, iq, t) {
+    const mapped = {
+      branches: b ? b.map(mapBranch) : [],
+      clients: c ? c.map(mapClient) : [],
+      services: s ? s.map(mapService) : [],
+      bookings: bk ? bk.map(mapBooking) : [],
+      invoices: inv ? inv.map(mapInvoice) : [],
+      inquiries: iq ? iq.map(mapInquiry) : [],
+      tags: t ? t.map(mapTag) : [],
+    };
+    setBranches(mapped.branches);
+    setClients(mapped.clients);
+    setServices(mapped.services);
+    setBookings(mapped.bookings);
+    setInvoices(mapped.invoices);
+    setInquiries(mapped.inquiries);
+    setTags(mapped.tags);
+    setBranchId((prev) => prev || mapped.branches[0]?.id || null);
+    saveCache(mapped);
+    setUsingCache(false);
+  }
+
+  async function fetchAll() {
+    try {
+      const [b, c, s, bk, inv, iq, t] = await Promise.all([
+        supabase.from("branches").select("*"),
+        supabase.from("clients").select("*"),
+        supabase.from("services").select("*"),
+        supabase.from("bookings").select("*"),
+        supabase.from("invoices").select("*"),
+        supabase.from("inquiries").select("*"),
+        supabase.from("tags").select("*"),
+      ]);
+      if (b.error) throw b.error;
+      applyFetchedData(b.data, c.data, s.data, bk.data, inv.data, iq.data, t.data);
+      setIsOnline(true);
+    } catch (e) {
+      // No connection (or Supabase unreachable) — fall back to whatever we last cached locally.
+      const cached = loadCache();
+      if (cached) {
+        setBranches(cached.branches || []);
+        setClients(cached.clients || []);
+        setServices(cached.services || []);
+        setBookings(cached.bookings || []);
+        setInvoices(cached.invoices || []);
+        setInquiries(cached.inquiries || []);
+        setTags(cached.tags || []);
+        setBranchId((prev) => prev || cached.branches?.[0]?.id || null);
+        setUsingCache(true);
+      }
+      setIsOnline(false);
+    }
+    setDataLoading(false);
+  }
+
+  async function syncPending() {
+    const queue = getQueue();
+    if (queue.length === 0) {
+      fetchAll();
+      return;
+    }
+    setSyncing(true);
+    const idMap = {}; // maps a temporary offline id -> the real id Supabase assigns
+    for (const action of queue) {
+      try {
+        if (action.type === "addClient") {
+          const { data, error } = await supabase.from("clients").insert(action.payload).select().single();
+          if (error) throw error;
+          idMap[action.tempId] = data.id;
+        } else if (action.type === "addBooking") {
+          const payload = { ...action.payload };
+          if (idMap[payload.client_id]) payload.client_id = idMap[payload.client_id];
+          const { error } = await supabase.from("bookings").insert(payload);
+          if (error) throw error;
+        } else if (action.type === "updateBookingStatus") {
+          const { error } = await supabase.from("bookings").update({ status: action.payload.status }).eq("id", action.payload.id);
+          if (error) throw error;
+        } else if (action.type === "updateInquiryStatus") {
+          const { error } = await supabase.from("inquiries").update({ status: action.payload.status }).eq("id", action.payload.id);
+          if (error) throw error;
+        } else if (action.type === "tapTag") {
+          const { error } = await supabase.from("tags").update({ last_scan: action.payload.stamp }).eq("id", action.payload.tagId);
+          if (error) throw error;
+          if (action.payload.inquiry) {
+            const { error: iqErr } = await supabase.from("inquiries").insert(action.payload.inquiry);
+            if (iqErr) throw iqErr;
+          }
+        }
+        removeFromQueue(action.id);
+      } catch (e) {
+        // Still offline, or this one failed — stop here and try again next time we're online.
+        setSyncing(false);
+        setPendingCount(queueCount());
+        return;
+      }
+    }
+    setPendingCount(queueCount());
+    setSyncing(false);
+    fetchAll();
+  }
 
   useEffect(() => {
     if (!providerName) return;
+    fetchAll();
+    if (navigator.onLine && queueCount() > 0) syncPending();
 
-    Promise.all([
-      supabase.from("branches").select("*"),
-      supabase.from("clients").select("*"),
-      supabase.from("services").select("*"),
-      supabase.from("bookings").select("*"),
-      supabase.from("invoices").select("*"),
-      supabase.from("inquiries").select("*"),
-      supabase.from("tags").select("*"),
-    ]).then(([b, c, s, bk, inv, iq, t]) => {
-      if (b.data) {
-        setBranches(b.data.map(mapBranch));
-        if (b.data[0]) setBranchId(b.data[0].id);
-      }
-      if (c.data) setClients(c.data.map(mapClient));
-      if (s.data) setServices(s.data.map(mapService));
-      if (bk.data) setBookings(bk.data.map(mapBooking));
-      if (inv.data) setInvoices(inv.data.map(mapInvoice));
-      if (iq.data) setInquiries(iq.data.map(mapInquiry));
-      if (t.data) setTags(t.data.map(mapTag));
-      setDataLoading(false);
-    });
+    function handleOnline() {
+      setIsOnline(true);
+      syncPending();
+    }
+    function handleOffline() {
+      setIsOnline(false);
+    }
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
 
     supabase
       .from("service_requests")
@@ -301,6 +419,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       .subscribe();
 
     return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
       supabase.removeChannel(requestsChannel);
       supabase.removeChannel(bookingsChannel);
     };
@@ -309,7 +429,13 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
   async function markRequestHandled(id) {
     setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: "handled" } : r)));
-    await supabase.from("service_requests").update({ status: "handled" }).eq("id", id);
+    try {
+      const { error } = await supabase.from("service_requests").update({ status: "handled" }).eq("id", id);
+      if (error) throw error;
+    } catch (e) {
+      // handled locally; will reconcile next successful fetch — request-handling isn't queued
+      // since it's low-stakes and the live subscription will correct it once back online.
+    }
   }
 
   if (!providerName) return <Login onSignIn={setProviderName} onBack={onExit} />;
@@ -344,11 +470,26 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     setTags((prev) => prev.map((t) => (t.id === tagId ? { ...t, lastScan: stamp } : t)));
     setTapFlash(tagId);
     setTimeout(() => setTapFlash(null), 1000);
-    await supabase.from("tags").update({ last_scan: stamp }).eq("id", tagId);
-    if (tag.type === "Service request") {
-      const newInquiry = { branch_id: tag.branchId, client_id: bClients[0]?.id || null, message: "Tap request from " + tag.label, status: "new" };
-      const { data } = await supabase.from("inquiries").insert(newInquiry).select().single();
-      if (data) setInquiries((prev) => [mapInquiry(data), ...prev]);
+
+    const inquiryPayload =
+      tag.type === "Service request"
+        ? { branch_id: tag.branchId, client_id: bClients[0]?.id || null, message: "Tap request from " + tag.label, status: "new" }
+        : null;
+
+    try {
+      const { error } = await supabase.from("tags").update({ last_scan: stamp }).eq("id", tagId);
+      if (error) throw error;
+      if (inquiryPayload) {
+        const { data, error: iqErr } = await supabase.from("inquiries").insert(inquiryPayload).select().single();
+        if (iqErr) throw iqErr;
+        if (data) setInquiries((prev) => [mapInquiry(data), ...prev]);
+      }
+    } catch (e) {
+      enqueueAction({ type: "tapTag", payload: { tagId, stamp, inquiry: inquiryPayload } });
+      setPendingCount(queueCount());
+      if (inquiryPayload) {
+        setInquiries((prev) => [{ id: "pending-" + Date.now(), branchId: inquiryPayload.branch_id, clientId: inquiryPayload.client_id, message: inquiryPayload.message, status: inquiryPayload.status }, ...prev]);
+      }
     }
   }
 
@@ -358,12 +499,24 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     const idx = INQUIRY_STAGES.indexOf(iq.status);
     const next = INQUIRY_STAGES[Math.min(Math.max(idx + dir, 0), INQUIRY_STAGES.length - 1)];
     setInquiries((prev) => prev.map((x) => (x.id === id ? { ...x, status: next } : x)));
-    await supabase.from("inquiries").update({ status: next }).eq("id", id);
+    try {
+      const { error } = await supabase.from("inquiries").update({ status: next }).eq("id", id);
+      if (error) throw error;
+    } catch (e) {
+      enqueueAction({ type: "updateInquiryStatus", payload: { id, status: next } });
+      setPendingCount(queueCount());
+    }
   }
 
   async function updateBookingStatus(id, status) {
     setBookings((prev) => prev.map((bk) => (bk.id === id ? { ...bk, status } : bk)));
-    await supabase.from("bookings").update({ status }).eq("id", id);
+    try {
+      const { error } = await supabase.from("bookings").update({ status }).eq("id", id);
+      if (error) throw error;
+    } catch (e) {
+      enqueueAction({ type: "updateBookingStatus", payload: { id, status } });
+      setPendingCount(queueCount());
+    }
   }
 
   async function generateGuestCode(bk) {
@@ -441,6 +594,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
               {tab === "tags" ? "NFC tags" : tab}
             </h2>
           </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <ConnectionBadge isOnline={isOnline} usingCache={usingCache} syncing={syncing} pendingCount={pendingCount} />
           <div style={{ position: "relative" }}>
             <button
               onClick={() => setShowBranchMenu((s) => !s)}
@@ -474,6 +629,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                 ))}
               </div>
             )}
+          </div>
           </div>
         </div>
 
@@ -730,30 +886,40 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           services={bServices}
           onClose={() => setShowAddBooking(false)}
           onAddClient={async (newClient) => {
-            const { data, error } = await supabase
-              .from("clients")
-              .insert({ branch_id: branchId, name: newClient.name, phone: newClient.phone })
-              .select()
-              .single();
-            if (error || !data) return null;
-            const client = mapClient(data);
-            setClients((prev) => [...prev, client]);
-            return client;
+            const payload = { branch_id: branchId, name: newClient.name, phone: newClient.phone };
+            try {
+              const { data, error } = await supabase.from("clients").insert(payload).select().single();
+              if (error) throw error;
+              const client = mapClient(data);
+              setClients((prev) => [...prev, client]);
+              return client;
+            } catch (e) {
+              const tempId = "temp-" + Date.now();
+              enqueueAction({ type: "addClient", payload, tempId });
+              setPendingCount(queueCount());
+              const client = { id: tempId, branchId, name: newClient.name, phone: newClient.phone };
+              setClients((prev) => [...prev, client]);
+              return client;
+            }
           }}
           onSave={async (newBooking) => {
-            const { data, error } = await supabase
-              .from("bookings")
-              .insert({
-                branch_id: branchId,
-                client_id: newBooking.clientId,
-                service_ids: newBooking.serviceIds,
-                check_in: newBooking.checkIn,
-                check_out: newBooking.checkOut,
-                status: newBooking.status,
-              })
-              .select()
-              .single();
-            if (data) setBookings((prev) => [...prev, mapBooking(data)]);
+            const payload = {
+              branch_id: branchId,
+              client_id: newBooking.clientId,
+              service_ids: newBooking.serviceIds,
+              check_in: newBooking.checkIn,
+              check_out: newBooking.checkOut,
+              status: newBooking.status,
+            };
+            try {
+              const { data, error } = await supabase.from("bookings").insert(payload).select().single();
+              if (error) throw error;
+              setBookings((prev) => [...prev, mapBooking(data)]);
+            } catch (e) {
+              enqueueAction({ type: "addBooking", payload });
+              setPendingCount(queueCount());
+              setBookings((prev) => [...prev, { id: "temp-" + Date.now(), branchId, clientId: newBooking.clientId, serviceIds: newBooking.serviceIds, checkIn: newBooking.checkIn, checkOut: newBooking.checkOut, status: newBooking.status }]);
+            }
             setShowAddBooking(false);
           }}
         />
@@ -764,12 +930,17 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         <AddClientModal
           onClose={() => setShowAddClient(false)}
           onSave={async (newClient) => {
-            const { data, error } = await supabase
-              .from("clients")
-              .insert({ branch_id: branchId, name: newClient.name, phone: newClient.phone })
-              .select()
-              .single();
-            if (data) setClients((prev) => [...prev, mapClient(data)]);
+            const payload = { branch_id: branchId, name: newClient.name, phone: newClient.phone };
+            try {
+              const { data, error } = await supabase.from("clients").insert(payload).select().single();
+              if (error) throw error;
+              setClients((prev) => [...prev, mapClient(data)]);
+            } catch (e) {
+              const tempId = "temp-" + Date.now();
+              enqueueAction({ type: "addClient", payload, tempId });
+              setPendingCount(queueCount());
+              setClients((prev) => [...prev, { id: tempId, branchId, name: newClient.name, phone: newClient.phone }]);
+            }
             setShowAddClient(false);
           }}
         />
