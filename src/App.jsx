@@ -3,7 +3,7 @@ import { supabase } from "./supabaseClient";
 import { saveCache, loadCache, getQueue, enqueueAction, removeFromQueue, queueCount } from "./offlineStore";
 import {
   LayoutGrid, CalendarDays, Users, MessageSquareText, Wrench,
-  Radio, Wallet, Building2, ChevronDown, Plus, X, Check, Bell
+  Radio, Wallet, Building2, ChevronDown, Plus, X, Check, Bell, Menu
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -48,7 +48,7 @@ const FONTS = (
 --------------------------------------------------------- */
 const mapBranch = (r) => ({ id: r.id, name: r.name, location: r.location });
 const mapClient = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, phone: r.phone });
-const mapService = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, price: r.price, category: r.category });
+const mapService = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, price: r.price, category: r.category, billingUnit: r.billing_unit || "flat" });
 const mapBooking = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, serviceIds: r.service_ids || [], checkIn: r.check_in, checkOut: r.check_out, status: r.status });
 const mapInvoice = (r) => ({ id: r.id, branchId: r.branch_id, bookingId: r.booking_id, amount: r.amount, status: r.status });
 const mapInquiry = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, message: r.message, status: r.status });
@@ -63,6 +63,27 @@ const TIER_OPTIONS = ["Essentials", "Growth", "Full Suite"];
 
 const INQUIRY_STAGES = ["new", "quoted", "confirmed", "completed"];
 const money = (n) => "TSh " + n.toLocaleString();
+
+function nightsBetween(checkIn, checkOut) {
+  if (!checkIn || !checkOut || checkIn === "TBC" || checkOut === "TBC") return 1;
+  const inD = new Date(checkIn);
+  const outD = new Date(checkOut);
+  const diff = Math.round((outD - inD) / 86400000);
+  return diff > 0 ? diff : 1;
+}
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 780px)").matches : false
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 780px)");
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  return isMobile;
+}
 
 
 /* ---------------------------------------------------------
@@ -236,7 +257,7 @@ function Login({ onSignIn, onBack }) {
     }}>
       {FONTS}
       <div style={{
-        width: "360px", background: C.paperRaised, border: `1px solid ${C.line}`,
+        width: "min(360px, 92vw)", background: C.paperRaised, border: `1px solid ${C.line}`,
         borderRadius: "14px", padding: "36px 32px"
       }}>
         <div style={{
@@ -331,6 +352,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [tapFlash, setTapFlash] = useState(null);
   const [generatedCode, setGeneratedCode] = useState(null);
   const [printInvoice, setPrintInvoice] = useState(null);
+  const isMobile = useIsMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [generatingId, setGeneratingId] = useState(null);
   const [requests, setRequests] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -626,7 +649,13 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     const existingInvoice = invoices.find((v) => v.bookingId === id);
 
     if (status === "confirmed" && !existingInvoice) {
-      const amount = bk.serviceIds.reduce((sum, sid) => sum + (services.find((s) => s.id === sid)?.price || 0), 0);
+      const nights = nightsBetween(bk.checkIn, bk.checkOut);
+      const amount = bk.serviceIds.reduce((sum, sid) => {
+        const svc = services.find((s) => s.id === sid);
+        if (!svc) return sum;
+        const qty = svc.billingUnit === "per_night" ? nights : 1;
+        return sum + svc.price * qty;
+      }, 0);
       const payload = { branch_id: branchId, booking_id: id, amount, status: "outstanding" };
       try {
         const { data, error } = await supabase.from("invoices").insert(payload).select().single();
@@ -691,11 +720,28 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   ];
 
   return (
-    <div className="ws" style={{ display: "flex", minHeight: "640px", background: C.paper, color: C.ink }}>
+    <div className="ws" style={{ display: "flex", minHeight: "640px", background: C.paper, color: C.ink, position: "relative", overflowX: "hidden" }}>
       {FONTS}
 
+      {/* Backdrop for the mobile sidebar drawer */}
+      {isMobile && sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(22,35,59,0.4)", zIndex: 15 }}
+        />
+      )}
+
       {/* Sidebar */}
-      <div style={{ width: "220px", background: C.ink, padding: "20px 14px", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+      <div style={{
+        width: "220px", background: C.ink, padding: "20px 14px", display: "flex", flexDirection: "column", flexShrink: 0,
+        ...(isMobile
+          ? {
+              position: "fixed", top: 0, bottom: 0, left: 0, zIndex: 16,
+              transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
+              transition: "transform 200ms ease", boxShadow: sidebarOpen ? "4px 0 16px rgba(0,0,0,0.2)" : "none"
+            }
+          : {})
+      }}>
         <div style={{ display: "flex", alignItems: "center", gap: "9px", padding: "0 6px 20px" }}>
           <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Radio size={14} color={C.signal} />
@@ -704,7 +750,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
           {NAV.map((n) => (
-            <NavItem key={n.id} icon={n.icon} label={n.label} active={tab === n.id} onClick={() => setTab(n.id)} badge={n.badge} />
+            <NavItem key={n.id} icon={n.icon} label={n.label} active={tab === n.id} onClick={() => { setTab(n.id); setSidebarOpen(false); }} badge={n.badge} />
           ))}
         </div>
         <div style={{ marginTop: "auto", padding: "12px 6px 0", borderTop: "1px solid rgba(255,255,255,0.12)" }}>
@@ -727,11 +773,16 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {/* Top bar */}
         <div style={{
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          padding: "16px 28px", borderBottom: `1px solid ${C.line}`, position: "relative"
+          display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px",
+          padding: isMobile ? "14px 16px" : "16px 28px", borderBottom: `1px solid ${C.line}`, position: "relative"
         }}>
-          <div>
-            <h2 className="fr" style={{ margin: 0, fontSize: "21px", fontWeight: 500, textTransform: "capitalize" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            {isMobile && (
+              <button onClick={() => setSidebarOpen(true)} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: "7px", padding: "8px", cursor: "pointer", display: "flex" }}>
+                <Menu size={18} color={C.ink} />
+              </button>
+            )}
+            <h2 className="fr" style={{ margin: 0, fontSize: isMobile ? "18px" : "21px", fontWeight: 500, textTransform: "capitalize" }}>
               {tab === "tags" ? "NFC tags" : tab}
             </h2>
           </div>
@@ -775,10 +826,10 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         </div>
 
         {/* Content */}
-        <div style={{ padding: "24px 28px", overflowY: "auto", flex: 1 }}>
+        <div style={{ padding: isMobile ? "16px" : "24px 28px", overflowY: "auto", flex: 1 }}>
 
           {tab === "dashboard" && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(4, 1fr)", gap: isMobile ? "10px" : "16px" }}>
               {[
                 ["Active bookings", bBookings.filter((b) => b.status === "confirmed").length],
                 ["Open inquiries", bInquiries.filter((i) => i.status !== "completed").length],
@@ -790,7 +841,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                   <div className="fr" style={{ fontSize: "24px", fontWeight: 500 }}>{val}</div>
                 </div>
               ))}
-              <div style={{ gridColumn: "span 4" }}>
+              <div style={{ gridColumn: isMobile ? "span 2" : "span 4" }}>
                 <Panel title="Recent inquiries">
                   <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                     {bInquiries.slice(0, 4).map((iq) => (
@@ -851,6 +902,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                 </button>
               }
             >
+              <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                 <thead>
                   <tr style={{ textAlign: "left", color: C.inkSoft, fontSize: "12.5px" }}>
@@ -881,6 +933,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                   ))}
                 </tbody>
               </table>
+              </div>
             </Panel>
           )}
 
@@ -893,7 +946,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                 </button>
               }
             >
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "14px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: "14px" }}>
                 {bClients.map((c) => (
                   <div key={c.id} style={{ border: `1px solid ${C.line}`, borderRadius: "9px", padding: "14px" }}>
                     <div style={{ fontWeight: 500, marginBottom: "4px" }}>{c.name}</div>
@@ -908,7 +961,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           )}
 
           {tab === "inquiries" && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(4, 1fr)", gap: "14px" }}>
               {INQUIRY_STAGES.map((stage, colIdx) => (
                 <div key={stage}>
                   <div style={{ fontSize: "12.5px", fontWeight: 600, color: C.inkSoft, textTransform: "capitalize", marginBottom: "10px" }}>{stage}</div>
@@ -931,6 +984,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
           {tab === "services" && (
             <Panel title="Service catalog">
+              <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                 <thead>
                   <tr style={{ textAlign: "left", color: C.inkSoft, fontSize: "12.5px" }}>
@@ -944,11 +998,12 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                     <tr key={s.id} style={{ borderTop: `1px solid ${C.line}` }}>
                       <td style={{ padding: "10px 0" }}>{s.name}</td>
                       <td>{s.category}</td>
-                      <td>{money(s.price)}</td>
+                      <td>{money(s.price)}{s.billingUnit === "per_night" ? "/night" : ""}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              </div>
             </Panel>
           )}
 
@@ -957,7 +1012,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
               <p style={{ fontSize: "13.5px", color: C.inkSoft, marginTop: 0, marginBottom: "18px" }}>
                 Tap a tag below to simulate a guest or staff scan — a room tag logs a scan, a service-request tag opens a new inquiry.
               </p>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "14px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(3, 1fr)", gap: "14px" }}>
                 {bTags.map((t) => (
                   <div
                     key={t.id}
@@ -993,6 +1048,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                 </div>
               </div>
               <Panel title="Invoices">
+                <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                   <thead>
                     <tr style={{ textAlign: "left", color: C.inkSoft, fontSize: "12.5px" }}>
@@ -1033,6 +1089,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                     })}
                   </tbody>
                 </table>
+                </div>
               </Panel>
             </div>
           )}
@@ -1150,7 +1207,7 @@ function AddClientModal({ onClose, onSave }) {
       position: "fixed", inset: 0, background: "rgba(22,35,59,0.35)",
       display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20
     }}>
-      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "340px" }}>
+      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(340px, 92vw)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
           <h3 className="fr" style={{ margin: 0, fontSize: "19px" }}>New client</h3>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={18} /></button>
@@ -1229,7 +1286,7 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
       position: "fixed", inset: 0, background: "rgba(22,35,59,0.35)",
       display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20
     }}>
-      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "380px" }}>
+      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 92vw)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
           <h3 className="fr" style={{ margin: 0, fontSize: "19px" }}>New booking</h3>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={18} /></button>
@@ -1264,7 +1321,7 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
           {services.map((s) => (
             <label key={s.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13.5px" }}>
               <input type="checkbox" checked={serviceIds.includes(s.id)} onChange={() => toggleService(s.id)} />
-              {s.name} — {money(s.price)}
+              {s.name} — {money(s.price)}{s.billingUnit === "per_night" ? "/night" : ""}
             </label>
           ))}
         </div>
@@ -1310,6 +1367,7 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
 function InvoicePrintModal({ data, branch, clientName, serviceNames, services, onClose }) {
   const { invoice, booking } = data;
   const lines = booking ? booking.serviceIds.map((id) => services.find((s) => s.id === id)).filter(Boolean) : [];
+  const nights = booking ? nightsBetween(booking.checkIn, booking.checkOut) : 1;
   const today = new Date().toLocaleDateString([], { dateStyle: "medium" });
 
   return (
@@ -1327,7 +1385,7 @@ function InvoicePrintModal({ data, branch, clientName, serviceNames, services, o
           .no-print { display: none !important; }
         }
       `}</style>
-      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "0", width: "440px", maxHeight: "88vh", overflowY: "auto" }}>
+      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "0", width: "min(440px, 92vw)", maxHeight: "88vh", overflowY: "auto" }}>
         <div id="invoice-print-area" style={{ padding: "32px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px" }}>
             <div>
@@ -1355,12 +1413,15 @@ function InvoicePrintModal({ data, branch, clientName, serviceNames, services, o
               </tr>
             </thead>
             <tbody>
-              {lines.length > 0 ? lines.map((s) => (
-                <tr key={s.id} style={{ borderBottom: `1px solid ${C.line}` }}>
-                  <td style={{ padding: "7px 0" }}>{s.name}</td>
-                  <td style={{ padding: "7px 0", textAlign: "right" }}>{money(s.price)}</td>
-                </tr>
-              )) : (
+              {lines.length > 0 ? lines.map((s) => {
+                const qty = s.billingUnit === "per_night" ? nights : 1;
+                return (
+                  <tr key={s.id} style={{ borderBottom: `1px solid ${C.line}` }}>
+                    <td style={{ padding: "7px 0" }}>{s.name}{qty > 1 ? ` × ${qty} nights` : ""}</td>
+                    <td style={{ padding: "7px 0", textAlign: "right" }}>{money(s.price * qty)}</td>
+                  </tr>
+                );
+              }) : (
                 <tr><td colSpan={2} style={{ padding: "7px 0", color: C.inkSoft }}>{booking ? serviceNames(booking.serviceIds) : "—"}</td></tr>
               )}
             </tbody>
@@ -1413,7 +1474,7 @@ function GeneratedCodeModal({ entry, onClose, onOpenGuest }) {
       position: "fixed", inset: 0, background: "rgba(22,35,59,0.35)",
       display: "flex", alignItems: "center", justifyContent: "center", zIndex: 30
     }}>
-      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "28px", width: "340px", textAlign: "center" }}>
+      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "28px", width: "min(340px, 92vw)", textAlign: "center" }}>
         <div style={{ fontSize: "12.5px", color: C.inkSoft, marginBottom: "8px" }}>Guest access code</div>
         <div className="fr" style={{ fontSize: "32px", fontWeight: 500, letterSpacing: "1px", marginBottom: "6px", color: C.ink }}>{entry.code}</div>
         <div style={{ fontSize: "12.5px", color: C.inkSoft, marginBottom: "22px" }}>Valid until {expiresLabel}</div>
@@ -1438,6 +1499,7 @@ function OperatorApp({ onExit }) {
   const [session, setSession] = useState(undefined);
   const [subscribers, setSubscribers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
@@ -1492,17 +1554,17 @@ function OperatorApp({ onExit }) {
   }
 
   return (
-    <div className="ws" style={{ minHeight: "640px", background: C.paper, color: C.ink, padding: "28px 32px" }}>
+    <div className="ws" style={{ minHeight: "640px", background: C.paper, color: C.ink, padding: isMobile ? "16px" : "28px 32px" }}>
       {FONTS}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px", flexWrap: "wrap", gap: "10px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <div style={{ width: "30px", height: "30px", borderRadius: "8px", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Radio size={15} color={C.signal} />
           </div>
-          <h1 className="fr" style={{ margin: 0, fontSize: "22px", fontWeight: 500 }}>Utulivu · Operator</h1>
+          <h1 className="fr" style={{ margin: 0, fontSize: isMobile ? "18px" : "22px", fontWeight: 500 }}>Utulivu · Operator</h1>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <span style={{ fontSize: "12.5px", color: C.inkSoft }}>{session.user.email}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          {!isMobile && <span style={{ fontSize: "12.5px", color: C.inkSoft }}>{session.user.email}</span>}
           <button onClick={() => supabase.auth.signOut()} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: "7px", padding: "7px 12px", fontSize: "13px", color: C.inkSoft, cursor: "pointer" }}>
             Sign out
           </button>
@@ -1514,7 +1576,7 @@ function OperatorApp({ onExit }) {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "20px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: "16px", marginBottom: "20px" }}>
         {[
           ["Monthly recurring revenue", money(totalMrr)],
           ["Active subscribers", activeCount + " / " + subscribers.length],
@@ -1528,6 +1590,7 @@ function OperatorApp({ onExit }) {
       </div>
 
       <Panel title="Subscribers">
+        <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
           <thead>
             <tr style={{ textAlign: "left", color: C.inkSoft, fontSize: "12.5px" }}>
@@ -1567,6 +1630,7 @@ function OperatorApp({ onExit }) {
             ))}
           </tbody>
         </table>
+        </div>
       </Panel>
     </div>
   );
@@ -1668,7 +1732,7 @@ function GuestApp({ onExit, initialCode }) {
     return (
       <div style={{ minHeight: "560px", display: "flex", alignItems: "center", justifyContent: "center", background: C.paper }}>
         {FONTS}
-        <div className="ws" style={{ width: "340px", background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "14px", padding: "32px" }}>
+        <div className="ws" style={{ width: "min(340px, 92vw)", background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "14px", padding: "32px" }}>
           <div style={{ width: "40px", height: "40px", borderRadius: "9px", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "20px" }}>
             <Radio size={19} color={C.signal} />
           </div>
@@ -1704,7 +1768,7 @@ function GuestApp({ onExit, initialCode }) {
   return (
     <div className="ws" style={{ minHeight: "560px", background: C.paper, display: "flex", justifyContent: "center", padding: "36px 20px" }}>
       {FONTS}
-      <div style={{ width: "420px" }}>
+      <div style={{ width: "min(420px, 100%)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
           <h1 className="fr" style={{ margin: 0, fontSize: "22px", fontWeight: 500 }}>Your stay</h1>
           <span style={{
@@ -1870,6 +1934,7 @@ function GuestApp({ onExit, initialCode }) {
    here they live in one file for the demo.
 --------------------------------------------------------- */
 function PortalGate({ onSelect, onReset }) {
+  const isMobile = useIsMobile();
   const options = [
     { id: "operator", title: "Operator", desc: "Utulivu's own view — manage subscribers, tiers, and platform revenue." },
     { id: "provider", title: "Provider", desc: "The hospitality business's dashboard — bookings, clients, finance, NFC tags." },
@@ -1878,7 +1943,7 @@ function PortalGate({ onSelect, onReset }) {
   return (
     <div className="ws" style={{ minHeight: "640px", background: C.paper, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
       {FONTS}
-      <div style={{ width: "620px" }}>
+      <div style={{ width: "min(620px, 100%)" }}>
         <div style={{ textAlign: "center", marginBottom: "30px" }}>
           <div style={{ width: "42px", height: "42px", borderRadius: "10px", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
             <Radio size={20} color={C.signal} />
@@ -1886,7 +1951,7 @@ function PortalGate({ onSelect, onReset }) {
           <h1 className="fr" style={{ margin: "0 0 6px", fontSize: "28px", fontWeight: 500, color: C.ink }}>Utulivu</h1>
           <p style={{ margin: 0, fontSize: "14px", color: C.inkSoft }}>Choose which portal to view.</p>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "14px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: "14px" }}>
           {options.map((o) => (
             <button
               key={o.id}
