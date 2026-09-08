@@ -186,7 +186,23 @@ function Panel({ title, action, children }) {
    Login
 --------------------------------------------------------- */
 function Login({ onSignIn, onBack }) {
-  const [name, setName] = useState("Kilimani House Hospitality");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [signingIn, setSigningIn] = useState(false);
+
+  async function handleSignIn() {
+    setSigningIn(true);
+    setError("");
+    const { data, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    setSigningIn(false);
+    if (authError || !data.session) {
+      setError("Incorrect email or password.");
+      return;
+    }
+    onSignIn(data.session);
+  }
+
   return (
     <div style={{
       minHeight: "560px", display: "flex", alignItems: "center", justifyContent: "center",
@@ -207,30 +223,50 @@ function Login({ onSignIn, onBack }) {
           Utulivu
         </h1>
         <p className="ws" style={{ margin: "0 0 26px", fontSize: "14px", color: C.inkSoft }}>
-          Hospitality operations, in one dashboard.
+          Sign in to manage your property.
         </p>
         <label className="ws" style={{ fontSize: "12.5px", color: C.inkSoft, display: "block", marginBottom: "6px" }}>
-          Provider account
+          Email
         </label>
         <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleSignIn()}
           className="ws"
           style={{
             width: "100%", padding: "10px 12px", borderRadius: "8px",
-            border: `1px solid ${C.line}`, marginBottom: "18px", fontSize: "14px",
+            border: `1px solid ${C.line}`, marginBottom: "14px", fontSize: "14px",
             outlineColor: C.signal, boxSizing: "border-box"
           }}
         />
+        <label className="ws" style={{ fontSize: "12.5px", color: C.inkSoft, display: "block", marginBottom: "6px" }}>
+          Password
+        </label>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleSignIn()}
+          className="ws"
+          style={{
+            width: "100%", padding: "10px 12px", borderRadius: "8px",
+            border: `1px solid ${C.line}`, marginBottom: "10px", fontSize: "14px",
+            outlineColor: C.signal, boxSizing: "border-box"
+          }}
+        />
+        {error && <p style={{ color: C.red, fontSize: "12.5px", margin: "0 0 12px" }}>{error}</p>}
         <button
-          onClick={() => onSignIn(name)}
+          onClick={handleSignIn}
+          disabled={signingIn || !email.trim() || !password}
           className="ws"
           style={{
             width: "100%", padding: "11px", borderRadius: "8px", border: "none",
-            background: C.ink, color: "#fff", fontSize: "14.5px", fontWeight: 500, cursor: "pointer"
+            background: C.ink, color: "#fff", fontSize: "14.5px", fontWeight: 500,
+            cursor: signingIn ? "default" : "pointer", opacity: signingIn ? 0.7 : 1, marginTop: "4px"
           }}
         >
-          Sign in to demo
+          {signingIn ? "Signing in…" : "Sign in"}
         </button>
         {onBack && (
           <button onClick={onBack} className="ws" style={{ width: "100%", marginTop: "10px", padding: "9px", borderRadius: "8px", border: `1px solid ${C.line}`, background: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
@@ -249,7 +285,7 @@ function Login({ onSignIn, onBack }) {
    Main app
 --------------------------------------------------------- */
 function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
-  const [providerName, setProviderName] = useState(null);
+  const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
   const [branches, setBranches] = useState([]);
   const [branchId, setBranchId] = useState(null);
   const [tab, setTab] = useState("dashboard");
@@ -376,7 +412,15 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   }
 
   useEffect(() => {
-    if (!providerName) return;
+    supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
     fetchAll();
     if (navigator.onLine && queueCount() > 0) syncPending();
 
@@ -425,7 +469,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       supabase.removeChannel(bookingsChannel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providerName]);
+  }, [session]);
 
   async function markRequestHandled(id) {
     setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: "handled" } : r)));
@@ -438,7 +482,15 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     }
   }
 
-  if (!providerName) return <Login onSignIn={setProviderName} onBack={onExit} />;
+  if (session === undefined) {
+    return (
+      <div style={{ minHeight: "560px", display: "flex", alignItems: "center", justifyContent: "center", background: C.paper, color: C.inkSoft }}>
+        {FONTS}
+        <p className="ws">Loading…</p>
+      </div>
+    );
+  }
+  if (!session) return <Login onSignIn={setSession} onBack={onExit} />;
   if (dataLoading || !branchId) {
     return (
       <div style={{ minHeight: "560px", display: "flex", alignItems: "center", justifyContent: "center", background: C.paper, color: C.inkSoft }}>
@@ -573,12 +625,17 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           ))}
         </div>
         <div style={{ marginTop: "auto", padding: "12px 6px 0", borderTop: "1px solid rgba(255,255,255,0.12)" }}>
-          <p style={{ color: "rgba(255,255,255,0.5)", fontSize: "12px", margin: "12px 0 6px" }}>{providerName}</p>
-          {onExit && (
-            <button onClick={onExit} className="ws" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.55)", fontSize: "12px", cursor: "pointer", padding: 0 }}>
-              ← Switch portal
+          <p style={{ color: "rgba(255,255,255,0.5)", fontSize: "12px", margin: "12px 0 6px" }}>{session.user.email}</p>
+          <div style={{ display: "flex", gap: "12px" }}>
+            <button onClick={() => supabase.auth.signOut()} className="ws" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.55)", fontSize: "12px", cursor: "pointer", padding: 0 }}>
+              Sign out
             </button>
-          )}
+            {onExit && (
+              <button onClick={onExit} className="ws" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.55)", fontSize: "12px", cursor: "pointer", padding: 0 }}>
+                ← Switch portal
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1171,10 +1228,20 @@ function GeneratedCodeModal({ entry, onClose, onOpenGuest }) {
    Operator portal — Utulivu's own view across all subscribers
 --------------------------------------------------------- */
 function OperatorApp({ onExit }) {
+  const [session, setSession] = useState(undefined);
   const [subscribers, setSubscribers] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
     supabase
       .from("subscribers")
       .select("*")
@@ -1182,7 +1249,7 @@ function OperatorApp({ onExit }) {
         if (data) setSubscribers(data.map(mapSubscriber));
         setLoading(false);
       });
-  }, []);
+  }, [session]);
 
   const totalMrr = subscribers.reduce((sum, p) => sum + p.mrr, 0);
   const activeCount = subscribers.filter((p) => p.subStatus === "active").length;
@@ -1199,6 +1266,15 @@ function OperatorApp({ onExit }) {
     overdue: { bg: "#F3DEDE", fg: C.red },
   };
 
+  if (session === undefined) {
+    return (
+      <div style={{ minHeight: "640px", display: "flex", alignItems: "center", justifyContent: "center", background: C.paper, color: C.inkSoft }}>
+        {FONTS}
+        <p className="ws">Loading…</p>
+      </div>
+    );
+  }
+  if (!session) return <Login onSignIn={setSession} onBack={onExit} />;
   if (loading) {
     return (
       <div style={{ minHeight: "640px", display: "flex", alignItems: "center", justifyContent: "center", background: C.paper, color: C.inkSoft }}>
@@ -1218,11 +1294,17 @@ function OperatorApp({ onExit }) {
           </div>
           <h1 className="fr" style={{ margin: 0, fontSize: "22px", fontWeight: 500 }}>Utulivu · Operator</h1>
         </div>
-        {onExit && (
-          <button onClick={onExit} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: "7px", padding: "7px 12px", fontSize: "13px", color: C.inkSoft, cursor: "pointer" }}>
-            ← Switch portal
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <span style={{ fontSize: "12.5px", color: C.inkSoft }}>{session.user.email}</span>
+          <button onClick={() => supabase.auth.signOut()} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: "7px", padding: "7px 12px", fontSize: "13px", color: C.inkSoft, cursor: "pointer" }}>
+            Sign out
           </button>
-        )}
+          {onExit && (
+            <button onClick={onExit} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: "7px", padding: "7px 12px", fontSize: "13px", color: C.inkSoft, cursor: "pointer" }}>
+              ← Switch portal
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "20px" }}>
@@ -1288,10 +1370,17 @@ function OperatorApp({ onExit }) {
    just a temporary access code that expires 1 hour after
    the linked booking's checkout.
 --------------------------------------------------------- */
+const GUEST_CODE_KEY = "utulivu_guest_code";
+
 function GuestApp({ onExit, initialCode }) {
-  const [codeInput, setCodeInput] = useState(initialCode || "");
+  const savedCode = (() => {
+    try { return localStorage.getItem(GUEST_CODE_KEY); } catch (e) { return null; }
+  })();
+  const startCode = initialCode || savedCode || "";
+
+  const [codeInput, setCodeInput] = useState(startCode);
   const [session, setSession] = useState(null);
-  const [loading, setLoading] = useState(Boolean(initialCode));
+  const [loading, setLoading] = useState(Boolean(startCode));
   const [error, setError] = useState("");
   const [requestSent, setRequestSent] = useState(false);
   const [requestSending, setRequestSending] = useState(false);
@@ -1304,7 +1393,7 @@ function GuestApp({ onExit, initialCode }) {
   const [sendingId, setSendingId] = useState(null);
 
   useEffect(() => {
-    if (initialCode) lookup(initialCode);
+    if (startCode) lookup(startCode, { silent: Boolean(!initialCode && savedCode) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1333,7 +1422,7 @@ function GuestApp({ onExit, initialCode }) {
     setRequestedIds((prev) => [...prev, item.id]);
   }
 
-  async function lookup(rawCode) {
+  async function lookup(rawCode, opts = {}) {
     setLoading(true);
     setError("");
     const { data, error: qErr } = await supabase
@@ -1343,14 +1432,29 @@ function GuestApp({ onExit, initialCode }) {
       .maybeSingle();
     setLoading(false);
     if (qErr || !data) {
-      setError("That access code wasn't recognized. Check the code from your booking confirmation.");
+      try { localStorage.removeItem(GUEST_CODE_KEY); } catch (e) {}
+      if (!opts.silent) setError("That access code wasn't recognized. Check the code from your booking confirmation.");
       return;
     }
+    const expired = Date.now() > new Date(data.expires_at).getTime();
+    if (expired && opts.silent) {
+      // Don't silently resurrect an expired stay — send them to the entry screen instead.
+      try { localStorage.removeItem(GUEST_CODE_KEY); } catch (e) {}
+      return;
+    }
+    try { localStorage.setItem(GUEST_CODE_KEY, data.code); } catch (e) {}
     setSession({ access: data });
   }
 
   function enter() {
     lookup(codeInput);
+  }
+
+  function switchGuest() {
+    try { localStorage.removeItem(GUEST_CODE_KEY); } catch (e) {}
+    setSession(null);
+    setCodeInput("");
+    setError("");
   }
 
   if (!session) {
@@ -1538,11 +1642,16 @@ function GuestApp({ onExit, initialCode }) {
           )}
         </Panel>
 
-        {onExit && (
-          <button onClick={onExit} style={{ marginTop: "18px", background: "none", border: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
-            ← Choose a different portal
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: "18px" }}>
+          <button onClick={switchGuest} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
+            Not you? Switch guest
           </button>
-        )}
+          {onExit && (
+            <button onClick={onExit} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
+              ← Choose a different portal
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
