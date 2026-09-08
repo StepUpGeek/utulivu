@@ -100,6 +100,8 @@ function Pill({ tone = "default", children }) {
     new: { bg: "#F3E7CE", fg: "#8A6A1E" },
     quoted: { bg: "#E4E9F3", fg: "#3A4E8A" },
     completed: { bg: C.signalSoft, fg: "#1E6E67" },
+    cancelled: { bg: "#F3DEDE", fg: C.red },
+    void: { bg: C.line, fg: C.inkSoft },
   };
   const t = tones[tone] || tones.default;
   return (
@@ -133,6 +135,30 @@ function StatusPicker({ value, onChange }) {
       }}
     >
       {BOOKING_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+    </select>
+  );
+}
+
+const INVOICE_STATUSES = ["outstanding", "paid", "void"];
+
+function InvoiceStatusPicker({ value, onChange }) {
+  const tones = {
+    outstanding: { bg: "#F3DEDE", fg: C.red },
+    paid: { bg: C.signalSoft, fg: "#1E6E67" },
+    void: { bg: C.line, fg: C.inkSoft },
+  };
+  const t = tones[value] || tones.outstanding;
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="ws"
+      style={{
+        background: t.bg, color: t.fg, fontSize: "12.5px", fontWeight: 500,
+        padding: "4px 8px", borderRadius: "999px", border: "none", cursor: "pointer",
+      }}
+    >
+      {INVOICE_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
     </select>
   );
 }
@@ -303,6 +329,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [showAddClient, setShowAddClient] = useState(false);
   const [tapFlash, setTapFlash] = useState(null);
   const [generatedCode, setGeneratedCode] = useState(null);
+  const [printInvoice, setPrintInvoice] = useState(null);
   const [generatingId, setGeneratingId] = useState(null);
   const [requests, setRequests] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -397,6 +424,12 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
             const { error: iqErr } = await supabase.from("inquiries").insert(action.payload.inquiry);
             if (iqErr) throw iqErr;
           }
+        } else if (action.type === "addInvoice") {
+          const { error } = await supabase.from("invoices").insert(action.payload);
+          if (error) throw error;
+        } else if (action.type === "updateInvoiceStatus") {
+          const { error } = await supabase.from("invoices").update({ status: action.payload.status }).eq("id", action.payload.id);
+          if (error) throw error;
         }
         removeFromQueue(action.id);
       } catch (e) {
@@ -561,12 +594,47 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   }
 
   async function updateBookingStatus(id, status) {
+    const bk = bookings.find((b) => b.id === id);
     setBookings((prev) => prev.map((bk) => (bk.id === id ? { ...bk, status } : bk)));
     try {
       const { error } = await supabase.from("bookings").update({ status }).eq("id", id);
       if (error) throw error;
     } catch (e) {
       enqueueAction({ type: "updateBookingStatus", payload: { id, status } });
+      setPendingCount(queueCount());
+    }
+
+    // Confirming a booking issues its invoice, if it doesn't have one yet.
+    // Cancelling voids whatever invoice exists. Completing leaves the invoice
+    // as-is — Finance flags it if it's still unpaid after checkout, rather
+    // than silently marking it paid.
+    if (!bk) return;
+    const existingInvoice = invoices.find((v) => v.bookingId === id);
+
+    if (status === "confirmed" && !existingInvoice) {
+      const amount = bk.serviceIds.reduce((sum, sid) => sum + (services.find((s) => s.id === sid)?.price || 0), 0);
+      const payload = { branch_id: branchId, booking_id: id, amount, status: "outstanding" };
+      try {
+        const { data, error } = await supabase.from("invoices").insert(payload).select().single();
+        if (error) throw error;
+        setInvoices((prev) => [...prev, mapInvoice(data)]);
+      } catch (e) {
+        enqueueAction({ type: "addInvoice", payload });
+        setPendingCount(queueCount());
+        setInvoices((prev) => [...prev, { id: "temp-" + Date.now(), branchId, bookingId: id, amount, status: "outstanding" }]);
+      }
+    } else if (status === "cancelled" && existingInvoice && existingInvoice.status !== "void") {
+      await updateInvoiceStatus(existingInvoice.id, "void");
+    }
+  }
+
+  async function updateInvoiceStatus(id, status) {
+    setInvoices((prev) => prev.map((v) => (v.id === id ? { ...v, status } : v)));
+    try {
+      const { error } = await supabase.from("invoices").update({ status }).eq("id", id);
+      if (error) throw error;
+    } catch (e) {
+      enqueueAction({ type: "updateInvoiceStatus", payload: { id, status } });
       setPendingCount(queueCount());
     }
   }
@@ -915,16 +983,31 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                       <th style={{ paddingBottom: "10px" }}>Booking</th>
                       <th>Amount</th>
                       <th>Status</th>
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
                     {bInvoices.map((v) => {
                       const bk = bookings.find((b) => b.id === v.bookingId);
+                      const unpaidAfterCheckout = bk?.status === "completed" && v.status === "outstanding";
                       return (
                         <tr key={v.id} style={{ borderTop: `1px solid ${C.line}` }}>
                           <td style={{ padding: "10px 0" }}>{bk ? clientName(bk.clientId) : "—"}</td>
                           <td>{money(v.amount)}</td>
-                          <td><Pill tone={v.status}>{v.status}</Pill></td>
+                          <td>
+                            <InvoiceStatusPicker value={v.status} onChange={(s) => updateInvoiceStatus(v.id, s)} />
+                            {unpaidAfterCheckout && (
+                              <div style={{ fontSize: "11.5px", color: C.red, marginTop: "4px" }}>Guest checked out — still unpaid</div>
+                            )}
+                          </td>
+                          <td>
+                            <button
+                              onClick={() => setPrintInvoice({ invoice: v, booking: bk })}
+                              style={{ fontSize: "12.5px", border: `1px solid ${C.line}`, background: "none", borderRadius: "6px", padding: "5px 10px", cursor: "pointer", color: C.clayDeep }}
+                            >
+                              Print
+                            </button>
+                          </td>
                         </tr>
                       );
                     })}
@@ -935,6 +1018,18 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           )}
         </div>
       </div>
+
+      {/* Printable invoice modal */}
+      {printInvoice && (
+        <InvoicePrintModal
+          data={printInvoice}
+          branch={branch}
+          clientName={clientName}
+          serviceNames={serviceNames}
+          services={services}
+          onClose={() => setPrintInvoice(null)}
+        />
+      )}
 
       {/* Add booking modal */}
       {showAddBooking && (
@@ -1187,6 +1282,98 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
    built for live demos: copy it, or jump straight into the
    guest portal with it already applied.
 --------------------------------------------------------- */
+/* ---------------------------------------------------------
+   Printable invoice — a clean modal that, when printed,
+   shows only the invoice itself (everything else on the page
+   is hidden via the print stylesheet below).
+--------------------------------------------------------- */
+function InvoicePrintModal({ data, branch, clientName, serviceNames, services, onClose }) {
+  const { invoice, booking } = data;
+  const lines = booking ? booking.serviceIds.map((id) => services.find((s) => s.id === id)).filter(Boolean) : [];
+  const today = new Date().toLocaleDateString([], { dateStyle: "medium" });
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(22,35,59,0.35)",
+      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 30
+    }}>
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #invoice-print-area, #invoice-print-area * { visibility: visible; }
+          #invoice-print-area {
+            position: fixed; inset: 0; margin: 0; box-shadow: none; border: none;
+          }
+          .no-print { display: none !important; }
+        }
+      `}</style>
+      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "0", width: "440px", maxHeight: "88vh", overflowY: "auto" }}>
+        <div id="invoice-print-area" style={{ padding: "32px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px" }}>
+            <div>
+              <div className="fr" style={{ fontSize: "20px", fontWeight: 500, color: C.ink }}>Utulivu</div>
+              <div style={{ fontSize: "12.5px", color: C.inkSoft }}>{branch?.name}</div>
+              <div style={{ fontSize: "12.5px", color: C.inkSoft }}>{branch?.location}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div className="fr" style={{ fontSize: "16px", fontWeight: 500 }}>Invoice</div>
+              <div style={{ fontSize: "12px", color: C.inkSoft }}>{today}</div>
+            </div>
+          </div>
+
+          <div style={{ fontSize: "13.5px", marginBottom: "20px" }}>
+            <div style={{ color: C.inkSoft, fontSize: "12px", marginBottom: "2px" }}>Billed to</div>
+            <div style={{ fontWeight: 500 }}>{booking ? clientName(booking.clientId) : "—"}</div>
+            {booking && <div style={{ color: C.inkSoft, fontSize: "12.5px" }}>{booking.checkIn} → {booking.checkOut}</div>}
+          </div>
+
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px", marginBottom: "18px" }}>
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${C.line}`, textAlign: "left", color: C.inkSoft, fontSize: "12px" }}>
+                <th style={{ paddingBottom: "8px" }}>Item</th>
+                <th style={{ paddingBottom: "8px", textAlign: "right" }}>Price</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.length > 0 ? lines.map((s) => (
+                <tr key={s.id} style={{ borderBottom: `1px solid ${C.line}` }}>
+                  <td style={{ padding: "7px 0" }}>{s.name}</td>
+                  <td style={{ padding: "7px 0", textAlign: "right" }}>{money(s.price)}</td>
+                </tr>
+              )) : (
+                <tr><td colSpan={2} style={{ padding: "7px 0", color: C.inkSoft }}>{booking ? serviceNames(booking.serviceIds) : "—"}</td></tr>
+              )}
+            </tbody>
+          </table>
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: "10px", borderTop: `2px solid ${C.ink}` }}>
+            <span className="fr" style={{ fontSize: "15px", fontWeight: 500 }}>Total</span>
+            <span className="fr" style={{ fontSize: "18px", fontWeight: 500 }}>{money(invoice.amount)}</span>
+          </div>
+          <div style={{ marginTop: "8px" }}>
+            <Pill tone={invoice.status}>{invoice.status}</Pill>
+          </div>
+        </div>
+
+        <div className="no-print" style={{ display: "flex", gap: "8px", padding: "16px 32px 24px" }}>
+          <button
+            onClick={() => window.print()}
+            style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: C.ink, color: "#fff", fontSize: "13.5px", cursor: "pointer" }}
+          >
+            Print
+          </button>
+          <button
+            onClick={onClose}
+            style={{ flex: 1, padding: "10px", borderRadius: "8px", border: `1px solid ${C.line}`, background: "none", color: C.inkSoft, fontSize: "13.5px", cursor: "pointer" }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GeneratedCodeModal({ entry, onClose, onOpenGuest }) {
   const [copied, setCopied] = useState(false);
   const expiresLabel = new Date(entry.expires_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
