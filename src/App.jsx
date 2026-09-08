@@ -312,6 +312,7 @@ function Login({ onSignIn, onBack }) {
 --------------------------------------------------------- */
 function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
+  const [role, setRole] = useState(null); // 'owner' | 'staff' | null while loading
   const [branches, setBranches] = useState([]);
   const [branchId, setBranchId] = useState(null);
   const [tab, setTab] = useState("dashboard");
@@ -451,6 +452,19 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     });
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!session) {
+      setRole(null);
+      return;
+    }
+    supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", session.user.id)
+      .single()
+      .then(({ data }) => setRole(data?.role || "staff"));
+  }, [session]);
 
   useEffect(() => {
     if (!session) return;
@@ -623,12 +637,13 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         setPendingCount(queueCount());
         setInvoices((prev) => [...prev, { id: "temp-" + Date.now(), branchId, bookingId: id, amount, status: "outstanding" }]);
       }
-    } else if (status === "cancelled" && existingInvoice && existingInvoice.status !== "void") {
+    } else if (status === "cancelled" && existingInvoice && existingInvoice.status !== "void" && role === "owner") {
       await updateInvoiceStatus(existingInvoice.id, "void");
     }
   }
 
   async function updateInvoiceStatus(id, status) {
+    if (role !== "owner") return; // staff can't change invoice status — enforced server-side too
     setInvoices((prev) => prev.map((v) => (v.id === id ? { ...v, status } : v)));
     try {
       const { error } = await supabase.from("invoices").update({ status }).eq("id", id);
@@ -693,7 +708,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           ))}
         </div>
         <div style={{ marginTop: "auto", padding: "12px 6px 0", borderTop: "1px solid rgba(255,255,255,0.12)" }}>
-          <p style={{ color: "rgba(255,255,255,0.5)", fontSize: "12px", margin: "12px 0 6px" }}>{session.user.email}</p>
+          <p style={{ color: "rgba(255,255,255,0.5)", fontSize: "12px", margin: "12px 0 2px" }}>{session.user.email}</p>
+          {role && <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "11px", margin: "0 0 6px", textTransform: "capitalize" }}>{role}</p>}
           <div style={{ display: "flex", gap: "12px" }}>
             <button onClick={() => supabase.auth.signOut()} className="ws" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.55)", fontSize: "12px", cursor: "pointer", padding: 0 }}>
               Sign out
@@ -995,7 +1011,11 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                           <td style={{ padding: "10px 0" }}>{bk ? clientName(bk.clientId) : "—"}</td>
                           <td>{money(v.amount)}</td>
                           <td>
-                            <InvoiceStatusPicker value={v.status} onChange={(s) => updateInvoiceStatus(v.id, s)} />
+                            {role === "owner" ? (
+                              <InvoiceStatusPicker value={v.status} onChange={(s) => updateInvoiceStatus(v.id, s)} />
+                            ) : (
+                              <Pill tone={v.status}>{v.status}</Pill>
+                            )}
                             {unpaidAfterCheckout && (
                               <div style={{ fontSize: "11.5px", color: C.red, marginTop: "4px" }}>Guest checked out — still unpaid</div>
                             )}
