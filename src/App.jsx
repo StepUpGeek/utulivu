@@ -3,7 +3,7 @@ import { supabase } from "./supabaseClient";
 import { saveCache, loadCache, getQueue, enqueueAction, removeFromQueue, queueCount } from "./offlineStore";
 import {
   LayoutGrid, CalendarDays, Users, MessageSquareText, Wrench,
-  Radio, Wallet, Building2, ChevronDown, Plus, X, Check, Bell, Menu
+  Radio, Wallet, Building2, ChevronDown, Plus, X, Check, Bell, Menu, Shield
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -353,6 +353,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [generatedCode, setGeneratedCode] = useState(null);
   const [printInvoice, setPrintInvoice] = useState(null);
   const [editingBooking, setEditingBooking] = useState(null);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [teamLoading, setTeamLoading] = useState(false);
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [generatingId, setGeneratingId] = useState(null);
@@ -498,6 +500,11 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       .single()
       .then(({ data }) => setRole(data?.role || "staff"));
   }, [session]);
+
+  useEffect(() => {
+    if (tab === "team" && role === "owner") fetchTeam();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   useEffect(() => {
     if (!session) return;
@@ -681,6 +688,19 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     }
   }
 
+  async function fetchTeam() {
+    setTeamLoading(true);
+    const { data } = await supabase.from("profiles").select("*").order("email");
+    setTeamMembers(data || []);
+    setTeamLoading(false);
+  }
+
+  async function toggleRole(id, currentRole) {
+    const nextRole = currentRole === "owner" ? "staff" : "owner";
+    setTeamMembers((prev) => prev.map((m) => (m.id === id ? { ...m, role: nextRole } : m)));
+    await supabase.from("profiles").update({ role: nextRole }).eq("id", id);
+  }
+
   async function updateInvoiceStatus(id, status) {
     if (role !== "owner") return; // staff can't change invoice status — enforced server-side too
     setInvoices((prev) => prev.map((v) => (v.id === id ? { ...v, status } : v)));
@@ -778,6 +798,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     { id: "services", label: "Services", icon: Wrench },
     { id: "tags", label: "NFC tags", icon: Radio },
     { id: "finance", label: "Finance", icon: Wallet },
+    ...(role === "owner" ? [{ id: "team", label: "Team", icon: Shield }] : []),
   ];
 
   return (
@@ -1182,6 +1203,40 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                 </div>
               </Panel>
             </div>
+          )}
+
+          {tab === "team" && role === "owner" && (
+            <Panel title="Team">
+              <p style={{ fontSize: "13.5px", color: C.inkSoft, marginTop: 0, marginBottom: "18px" }}>
+                Toggle who has owner access (full control, including editing/deleting bookings and clients, and finance) versus staff access (day-to-day work only).
+              </p>
+              {teamLoading ? (
+                <p style={{ fontSize: "13.5px", color: C.inkSoft }}>Loading…</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  {teamMembers.map((m) => (
+                    <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px", border: `1px solid ${C.line}`, borderRadius: "9px" }}>
+                      <div>
+                        <div style={{ fontSize: "14px", fontWeight: 500 }}>{m.email}</div>
+                        {m.id === session.user.id && <div style={{ fontSize: "11.5px", color: C.inkSoft }}>This is you</div>}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <Pill tone={m.role === "owner" ? "confirmed" : "default"}>{m.role}</Pill>
+                        <button
+                          onClick={() => toggleRole(m.id, m.role)}
+                          style={{ fontSize: "12.5px", border: `1px solid ${C.line}`, background: "none", borderRadius: "6px", padding: "6px 12px", cursor: "pointer", color: C.clayDeep }}
+                        >
+                          Make {m.role === "owner" ? "staff" : "owner"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {teamMembers.length === 0 && (
+                    <p style={{ fontSize: "13.5px", color: C.inkSoft }}>No team members yet — create accounts in Supabase's Authentication → Users, and they'll appear here automatically.</p>
+                  )}
+                </div>
+              )}
+            </Panel>
           )}
         </div>
       </div>
