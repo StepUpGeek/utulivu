@@ -352,6 +352,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [tapFlash, setTapFlash] = useState(null);
   const [generatedCode, setGeneratedCode] = useState(null);
   const [printInvoice, setPrintInvoice] = useState(null);
+  const [editingBooking, setEditingBooking] = useState(null);
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [generatingId, setGeneratingId] = useState(null);
@@ -453,6 +454,15 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           if (error) throw error;
         } else if (action.type === "updateInvoiceStatus") {
           const { error } = await supabase.from("invoices").update({ status: action.payload.status }).eq("id", action.payload.id);
+          if (error) throw error;
+        } else if (action.type === "editBooking") {
+          const { error } = await supabase.from("bookings").update(action.payload.updates).eq("id", action.payload.id);
+          if (error) throw error;
+        } else if (action.type === "deleteBooking") {
+          const { error } = await supabase.from("bookings").delete().eq("id", action.payload.id);
+          if (error) throw error;
+        } else if (action.type === "deleteClient") {
+          const { error } = await supabase.from("clients").delete().eq("id", action.payload.id);
           if (error) throw error;
         }
         removeFromQueue(action.id);
@@ -680,6 +690,57 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     } catch (e) {
       enqueueAction({ type: "updateInvoiceStatus", payload: { id, status } });
       setPendingCount(queueCount());
+    }
+  }
+
+  async function saveBookingEdit(id, updates) {
+    if (role !== "owner") return; // enforced server-side too, via the booking_edit_guard trigger
+    const dbUpdates = {
+      client_id: updates.clientId,
+      service_ids: updates.serviceIds,
+      check_in: updates.checkIn,
+      check_out: updates.checkOut,
+    };
+    setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, ...updates } : b)));
+    try {
+      const { error } = await supabase.from("bookings").update(dbUpdates).eq("id", id);
+      if (error) throw error;
+    } catch (e) {
+      enqueueAction({ type: "editBooking", payload: { id, updates: dbUpdates } });
+      setPendingCount(queueCount());
+    }
+    setEditingBooking(null);
+  }
+
+  async function deleteBooking(id) {
+    if (role !== "owner") return;
+    if (!window.confirm("Delete this booking? This can't be undone.")) return;
+    setBookings((prev) => prev.filter((b) => b.id !== id));
+    try {
+      const { error } = await supabase.from("bookings").delete().eq("id", id);
+      if (error) throw error;
+    } catch (e) {
+      enqueueAction({ type: "deleteBooking", payload: { id } });
+      setPendingCount(queueCount());
+    }
+  }
+
+  async function deleteClient(id) {
+    if (role !== "owner") return;
+    if (!window.confirm("Delete this client? This can't be undone.")) return;
+    const prevClients = clients;
+    setClients((prev) => prev.filter((c) => c.id !== id));
+    try {
+      const { error } = await supabase.from("clients").delete().eq("id", id);
+      if (error) throw error;
+    } catch (e) {
+      if (e?.code === "23503") {
+        setClients(prevClients);
+        alert("Can't delete this client — they have existing bookings. Remove those first.");
+      } else {
+        enqueueAction({ type: "deleteClient", payload: { id } });
+        setPendingCount(queueCount());
+      }
     }
   }
 
@@ -911,6 +972,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                     <th>Dates</th>
                     <th>Status</th>
                     <th>Guest access</th>
+                    {role === "owner" && <th></th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -929,6 +991,24 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                           {generatingId === bk.id ? "Generating…" : "Generate code"}
                         </button>
                       </td>
+                      {role === "owner" && (
+                        <td>
+                          <div style={{ display: "flex", gap: "6px" }}>
+                            <button
+                              onClick={() => setEditingBooking(bk)}
+                              style={{ fontSize: "12.5px", border: `1px solid ${C.line}`, background: "none", borderRadius: "6px", padding: "5px 10px", cursor: "pointer", color: C.ink }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => deleteBooking(bk.id)}
+                              style={{ fontSize: "12.5px", border: `1px solid ${C.line}`, background: "none", borderRadius: "6px", padding: "5px 10px", cursor: "pointer", color: C.red }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -948,9 +1028,19 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
             >
               <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: "14px" }}>
                 {bClients.map((c) => (
-                  <div key={c.id} style={{ border: `1px solid ${C.line}`, borderRadius: "9px", padding: "14px" }}>
-                    <div style={{ fontWeight: 500, marginBottom: "4px" }}>{c.name}</div>
-                    <div style={{ fontSize: "13px", color: C.inkSoft }}>{c.phone}</div>
+                  <div key={c.id} style={{ border: `1px solid ${C.line}`, borderRadius: "9px", padding: "14px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <div style={{ fontWeight: 500, marginBottom: "4px" }}>{c.name}</div>
+                      <div style={{ fontSize: "13px", color: C.inkSoft }}>{c.phone}</div>
+                    </div>
+                    {role === "owner" && (
+                      <button
+                        onClick={() => deleteClient(c.id)}
+                        style={{ fontSize: "12px", border: "none", background: "none", color: C.red, cursor: "pointer", padding: "2px" }}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </div>
                 ))}
                 {bClients.length === 0 && (
@@ -1175,6 +1265,17 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         />
       )}
 
+      {/* Edit booking modal (owner only) */}
+      {editingBooking && (
+        <EditBookingModal
+          booking={editingBooking}
+          clients={bClients}
+          services={bServices.filter((s) => s.category !== "Amenities")}
+          onClose={() => setEditingBooking(null)}
+          onSave={(updates) => saveBookingEdit(editingBooking.id, updates)}
+        />
+      )}
+
       {/* Generated guest code modal */}
       {generatedCode && (
         <GeneratedCodeModal
@@ -1240,6 +1341,85 @@ function AddClientModal({ onClose, onSave }) {
           }}
         >
           <Check size={16} /> {saving ? "Saving…" : "Save client"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   Edit an existing booking — owner only (both the button that
+   opens this and the underlying database write are gated to
+   the owner role; staff never see this option).
+--------------------------------------------------------- */
+function EditBookingModal({ booking, clients, services, onClose, onSave }) {
+  const [clientId, setClientId] = useState(booking.clientId);
+  const [serviceIds, setServiceIds] = useState(booking.serviceIds);
+  const [checkIn, setCheckIn] = useState(booking.checkIn === "TBC" ? "" : booking.checkIn);
+  const [checkOut, setCheckOut] = useState(booking.checkOut === "TBC" ? "" : booking.checkOut);
+  const [saving, setSaving] = useState(false);
+
+  const toggleService = (id) =>
+    setServiceIds((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
+
+  async function handleSave() {
+    setSaving(true);
+    await onSave({ clientId, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC" });
+    setSaving(false);
+  }
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(22,35,59,0.35)",
+      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20
+    }}>
+      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 92vw)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <h3 className="fr" style={{ margin: 0, fontSize: "19px" }}>Edit booking</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={18} /></button>
+        </div>
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Client</label>
+        <select value={clientId} onChange={(e) => setClientId(e.target.value)} style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px" }}>
+          {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Services</label>
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px", margin: "6px 0 14px" }}>
+          {services.map((s) => (
+            <label key={s.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13.5px" }}>
+              <input type="checkbox" checked={serviceIds.includes(s.id)} onChange={() => toggleService(s.id)} />
+              {s.name} — {money(s.price)}{s.billingUnit === "per_night" ? "/night" : ""}
+            </label>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: "10px", marginBottom: "18px" }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-in</label>
+            <input type="date" value={checkIn} onChange={(e) => setCheckIn(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-out</label>
+            <input type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
+          </div>
+        </div>
+
+        <p style={{ fontSize: "11.5px", color: C.inkSoft, margin: "0 0 12px" }}>
+          Note: this updates the booking's details only. If the booking already has an invoice, its amount won't change automatically — adjust it in Finance if needed.
+        </p>
+
+        <button
+          disabled={saving}
+          onClick={handleSave}
+          style={{
+            width: "100%", background: C.ink, color: "#fff",
+            border: "none", borderRadius: "8px", padding: "11px", fontSize: "14.5px",
+            cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
+            opacity: saving ? 0.7 : 1
+          }}
+        >
+          <Check size={16} /> {saving ? "Saving…" : "Save changes"}
         </button>
       </div>
     </div>
