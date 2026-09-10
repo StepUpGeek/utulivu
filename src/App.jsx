@@ -49,7 +49,7 @@ const FONTS = (
 const mapBranch = (r) => ({ id: r.id, name: r.name, location: r.location });
 const mapClient = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, phone: r.phone });
 const mapService = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, price: r.price, category: r.category, billingUnit: r.billing_unit || "flat" });
-const mapBooking = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, serviceIds: r.service_ids || [], checkIn: r.check_in, checkOut: r.check_out, status: r.status });
+const mapBooking = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, serviceIds: r.service_ids || [], checkIn: r.check_in, checkOut: r.check_out, status: r.status, roomNumber: r.room_number || "" });
 const mapInvoice = (r) => ({ id: r.id, branchId: r.branch_id, bookingId: r.booking_id, amount: r.amount, status: r.status });
 const mapInquiry = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, message: r.message, status: r.status });
 const mapTag = (r) => ({ id: r.id, branchId: r.branch_id, label: r.label, type: r.type, linkedName: r.linked_name, lastScan: r.last_scan });
@@ -717,6 +717,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     if (role !== "owner") return; // enforced server-side too, via the booking_edit_guard trigger
     const dbUpdates = {
       client_id: updates.clientId,
+      room_number: updates.roomNumber || null,
       service_ids: updates.serviceIds,
       check_in: updates.checkIn,
       check_out: updates.checkOut,
@@ -774,6 +775,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       code,
       branch_id: branchId,
       guest_name: clientName(bk.clientId),
+      room_number: bk.roomNumber || null,
       service_names: serviceNames(bk.serviceIds),
       check_in: bk.checkIn,
       check_out: bk.checkOut,
@@ -989,6 +991,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                 <thead>
                   <tr style={{ textAlign: "left", color: C.inkSoft, fontSize: "12.5px" }}>
                     <th style={{ paddingBottom: "10px" }}>Client</th>
+                    <th>Room</th>
                     <th>Services</th>
                     <th>Dates</th>
                     <th>Status</th>
@@ -1000,6 +1003,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                   {bBookings.map((bk) => (
                     <tr key={bk.id} style={{ borderTop: `1px solid ${C.line}` }}>
                       <td style={{ padding: "10px 0" }}>{clientName(bk.clientId)}</td>
+                      <td>{bk.roomNumber || "—"}</td>
                       <td>{serviceNames(bk.serviceIds)}</td>
                       <td>{bk.checkIn} → {bk.checkOut}</td>
                       <td><StatusPicker value={bk.status} onChange={(s) => updateBookingStatus(bk.id, s)} /></td>
@@ -1280,6 +1284,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
             const payload = {
               branch_id: branchId,
               client_id: newBooking.clientId,
+              room_number: newBooking.roomNumber || null,
               service_ids: newBooking.serviceIds,
               check_in: newBooking.checkIn,
               check_out: newBooking.checkOut,
@@ -1292,7 +1297,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
             } catch (e) {
               enqueueAction({ type: "addBooking", payload });
               setPendingCount(queueCount());
-              setBookings((prev) => [...prev, { id: "temp-" + Date.now(), branchId, clientId: newBooking.clientId, serviceIds: newBooking.serviceIds, checkIn: newBooking.checkIn, checkOut: newBooking.checkOut, status: newBooking.status }]);
+              setBookings((prev) => [...prev, { id: "temp-" + Date.now(), branchId, clientId: newBooking.clientId, roomNumber: newBooking.roomNumber, serviceIds: newBooking.serviceIds, checkIn: newBooking.checkIn, checkOut: newBooking.checkOut, status: newBooking.status }]);
             }
             setShowAddBooking(false);
           }}
@@ -1409,6 +1414,7 @@ function AddClientModal({ onClose, onSave }) {
 --------------------------------------------------------- */
 function EditBookingModal({ booking, clients, services, onClose, onSave }) {
   const [clientId, setClientId] = useState(booking.clientId);
+  const [roomNumber, setRoomNumber] = useState(booking.roomNumber || "");
   const [serviceIds, setServiceIds] = useState(booking.serviceIds);
   const [checkIn, setCheckIn] = useState(booking.checkIn === "TBC" ? "" : booking.checkIn);
   const [checkOut, setCheckOut] = useState(booking.checkOut === "TBC" ? "" : booking.checkOut);
@@ -1419,7 +1425,7 @@ function EditBookingModal({ booking, clients, services, onClose, onSave }) {
 
   async function handleSave() {
     setSaving(true);
-    await onSave({ clientId, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC" });
+    await onSave({ clientId, roomNumber: roomNumber.trim(), serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC" });
     setSaving(false);
   }
 
@@ -1438,6 +1444,14 @@ function EditBookingModal({ booking, clients, services, onClose, onSave }) {
         <select value={clientId} onChange={(e) => setClientId(e.target.value)} style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px" }}>
           {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Room number</label>
+        <input
+          value={roomNumber}
+          onChange={(e) => setRoomNumber(e.target.value)}
+          placeholder="e.g. Room 4"
+          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px", boxSizing: "border-box" }}
+        />
 
         <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Services</label>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px", margin: "6px 0 14px" }}>
@@ -1484,6 +1498,7 @@ function EditBookingModal({ booking, clients, services, onClose, onSave }) {
 function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
   const [clientQuery, setClientQuery] = useState("");
   const [phone, setPhone] = useState("");
+  const [roomNumber, setRoomNumber] = useState("");
   const [serviceIds, setServiceIds] = useState([]);
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
@@ -1512,7 +1527,7 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
       if (!created) { setSaving(false); return; }
       finalClientId = created.id;
     }
-    await onSave({ clientId: finalClientId, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC", status: "pending" });
+    await onSave({ clientId: finalClientId, roomNumber: roomNumber.trim(), serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC", status: "pending" });
     setSaving(false);
   }
 
@@ -1550,6 +1565,14 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
         <p style={{ fontSize: "12px", color: C.inkSoft, margin: "0 0 14px" }}>
           {matchedClient ? "Existing client" : clientQuery.trim() ? "New client — will be added" : ""}
         </p>
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Room number</label>
+        <input
+          value={roomNumber}
+          onChange={(e) => setRoomNumber(e.target.value)}
+          placeholder="e.g. Room 4"
+          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px", boxSizing: "border-box" }}
+        />
 
         <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Services</label>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px", margin: "6px 0 14px" }}>
@@ -1891,6 +1914,8 @@ function GuestApp({ onExit, initialCode }) {
   const [requestSent, setRequestSent] = useState(false);
   const [requestSending, setRequestSending] = useState(false);
   const [airtimeAmount, setAirtimeAmount] = useState("");
+  const [airtimeNetwork, setAirtimeNetwork] = useState("Vodacom");
+  const [airtimePhone, setAirtimePhone] = useState("");
   const [airtimeSending, setAirtimeSending] = useState(false);
   const [airtimeSent, setAirtimeSent] = useState(false);
   const [amenities, setAmenities] = useState([]);
@@ -2022,6 +2047,12 @@ function GuestApp({ onExit, initialCode }) {
 
         <Panel title="Booking">
           <div style={{ fontSize: "14px", lineHeight: 1.8 }}>
+            {access.room_number && (
+              <div style={{ marginBottom: "8px" }}>
+                <span style={{ fontSize: "12px", color: C.inkSoft }}>Your room</span>
+                <div className="fr" style={{ fontSize: "22px", fontWeight: 500, color: C.ink }}>{access.room_number}</div>
+              </div>
+            )}
             <div><strong>{access.service_names}</strong></div>
             <div style={{ color: C.inkSoft }}>{access.check_in} → {access.check_out}</div>
             <div style={{ marginTop: "6px" }}><Pill tone={access.status}>{access.status}</Pill></div>
@@ -2086,38 +2117,62 @@ function GuestApp({ onExit, initialCode }) {
           <div style={{ marginBottom: "16px", paddingBottom: "16px", borderBottom: `1px solid ${C.line}` }}>
             <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px", color: C.ink }}>Airtime top-up</p>
             {airtimeSent ? (
-              <p style={{ fontSize: "13.5px", color: "#1E6E67", margin: 0 }}>Request sent for TSh {Number(airtimeAmount).toLocaleString()} — front desk notified.</p>
+              <p style={{ fontSize: "13.5px", color: "#1E6E67", margin: 0 }}>Request sent — {airtimeNetwork}, TSh {Number(airtimeAmount).toLocaleString()} to {airtimePhone}. Front desk notified.</p>
             ) : (
-              <div style={{ display: "flex", gap: "8px" }}>
-                <input
-                  type="number"
-                  min="0"
-                  value={airtimeAmount}
-                  onChange={(e) => setAirtimeAmount(e.target.value)}
-                  placeholder="Amount in TSh"
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <select
+                  value={airtimeNetwork}
+                  onChange={(e) => setAirtimeNetwork(e.target.value)}
                   disabled={isExpired || airtimeSending}
-                  style={{ flex: 1, padding: "9px 10px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13.5px", boxSizing: "border-box" }}
-                />
-                <button
-                  disabled={isExpired || airtimeSending || !airtimeAmount || Number(airtimeAmount) <= 0}
-                  onClick={async () => {
-                    setAirtimeSending(true);
-                    await supabase.from("service_requests").insert({
-                      code: access.code,
-                      guest_name: access.guest_name,
-                      message: `${access.guest_name} requested airtime top-up: TSh ${Number(airtimeAmount).toLocaleString()}`,
-                    });
-                    setAirtimeSending(false);
-                    setAirtimeSent(true);
-                  }}
-                  style={{
-                    padding: "9px 14px", borderRadius: "7px", border: "none", fontSize: "13.5px", whiteSpace: "nowrap",
-                    background: isExpired ? C.line : C.clay, color: isExpired ? C.inkSoft : "#fff",
-                    cursor: isExpired ? "default" : "pointer", opacity: airtimeSending ? 0.7 : 1
-                  }}
+                  style={{ padding: "9px 10px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13.5px", boxSizing: "border-box" }}
                 >
-                  {airtimeSending ? "Sending…" : "Request"}
-                </button>
+                  {["Vodacom", "Tigo", "Airtel", "Halotel"].map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+                <input
+                  type="tel"
+                  value={airtimePhone}
+                  onChange={(e) => setAirtimePhone(e.target.value)}
+                  placeholder="Number to top up, e.g. +255 7XX XXX XXX"
+                  disabled={isExpired || airtimeSending}
+                  style={{ padding: "9px 10px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13.5px", boxSizing: "border-box" }}
+                />
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <input
+                    type="number"
+                    min="0"
+                    value={airtimeAmount}
+                    onChange={(e) => setAirtimeAmount(e.target.value)}
+                    placeholder="Amount in TSh"
+                    disabled={isExpired || airtimeSending}
+                    style={{ flex: 1, padding: "9px 10px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13.5px", boxSizing: "border-box" }}
+                  />
+                  <button
+                    disabled={isExpired || airtimeSending || !airtimeAmount || Number(airtimeAmount) <= 0 || !airtimePhone.trim()}
+                    onClick={async () => {
+                      setAirtimeSending(true);
+                      await supabase.from("service_requests").insert({
+                        code: access.code,
+                        guest_name: access.guest_name,
+                        network: airtimeNetwork,
+                        phone: airtimePhone.trim(),
+                        amount: Number(airtimeAmount),
+                        message: `${access.guest_name} requested airtime top-up: ${airtimeNetwork}, ${airtimePhone.trim()}, TSh ${Number(airtimeAmount).toLocaleString()}`,
+                      });
+                      setAirtimeSending(false);
+                      setAirtimeSent(true);
+                    }}
+                    style={{
+                      padding: "9px 14px", borderRadius: "7px", border: "none", fontSize: "13.5px", whiteSpace: "nowrap",
+                      background: isExpired ? C.line : C.clay, color: isExpired ? C.inkSoft : "#fff",
+                      cursor: isExpired ? "default" : "pointer", opacity: airtimeSending ? 0.7 : 1
+                    }}
+                  >
+                    {airtimeSending ? "Sending…" : "Request"}
+                  </button>
+                </div>
+                <p style={{ fontSize: "11.5px", color: C.inkSoft, margin: 0 }}>
+                  Enter whichever number you want topped up — it doesn't have to be the number tied to your booking.
+                </p>
               </div>
             )}
           </div>
