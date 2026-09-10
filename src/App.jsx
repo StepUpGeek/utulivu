@@ -49,10 +49,11 @@ const FONTS = (
 const mapBranch = (r) => ({ id: r.id, name: r.name, location: r.location });
 const mapClient = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, phone: r.phone, idType: r.id_type || null, idNumber: r.id_number || null });
 const mapService = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, price: r.price, category: r.category, billingUnit: r.billing_unit || "flat" });
-const mapBooking = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, serviceIds: r.service_ids || [], checkIn: r.check_in, checkOut: r.check_out, status: r.status, roomNumber: r.room_number || "" });
+const mapBooking = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, serviceIds: r.service_ids || [], checkIn: r.check_in, checkOut: r.check_out, status: r.status, roomNumber: r.room_number || "", roomId: r.room_id || null });
 const mapInvoice = (r) => ({ id: r.id, branchId: r.branch_id, bookingId: r.booking_id, amount: r.amount, status: r.status });
 const mapInquiry = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, message: r.message, status: r.status });
 const mapTag = (r) => ({ id: r.id, branchId: r.branch_id, label: r.label, type: r.type, linkedName: r.linked_name, lastScan: r.last_scan });
+const mapRoom = (r) => ({ id: r.id, branchId: r.branch_id, roomNumber: r.room_number, roomType: r.room_type });
 const mapSubscriber = (r) => ({ id: r.id, name: r.name, tier: r.tier, branches: r.branches, activeBookings: r.active_bookings, subStatus: r.sub_status, mrr: r.mrr });
 
 const TIER_OPTIONS = ["Essentials", "Growth", "Full Suite"];
@@ -60,6 +61,8 @@ const TIER_OPTIONS = ["Essentials", "Growth", "Full Suite"];
 // Services in these categories are guest self-serve requests (ordered from
 // the Guest portal after check-in), not line items a client picks at booking time.
 const GUEST_REQUEST_CATEGORIES = ["Amenities", "Kitchen", "Counter", "Laundry"];
+
+const ID_TYPE_OPTIONS = ["NIDA", "Voting ID", "Driving License", "Passport"];
 
 // Generates a client's real id up front instead of waiting on a DB round-trip
 // so an offline-queued insert doesn't need a follow-up read — which matters
@@ -83,6 +86,28 @@ function nightsBetween(checkIn, checkOut) {
   const outD = new Date(checkOut);
   const diff = Math.round((outD - inD) / 86400000);
   return diff > 0 ? diff : 1;
+}
+
+// A room is unavailable for a proposed stay if it overlaps an existing,
+// non-cancelled booking on that same room — mirrors the DB trigger
+// (room_double_booking_guard) so staff see the conflict before they even
+// try to save. A booking whose check-in equals its check-out never
+// occupies the room overnight, so it's excluded on both sides.
+function isRoomAvailable(roomId, checkIn, checkOut, existingBookings, excludeBookingId) {
+  if (!roomId || !checkIn || !checkOut || checkIn === "TBC" || checkOut === "TBC") return true;
+  if (checkIn === checkOut) return true;
+  const newIn = new Date(checkIn).getTime();
+  const newOut = new Date(checkOut).getTime();
+  return !existingBookings.some((b) => {
+    if (b.id === excludeBookingId) return false;
+    if (b.roomId !== roomId) return false;
+    if (b.status === "cancelled") return false;
+    if (!b.checkIn || !b.checkOut || b.checkIn === "TBC" || b.checkOut === "TBC") return false;
+    if (b.checkIn === b.checkOut) return false;
+    const bIn = new Date(b.checkIn).getTime();
+    const bOut = new Date(b.checkOut).getTime();
+    return newIn < bOut && bIn < newOut; // classic range overlap
+  });
 }
 
 function useIsMobile() {
@@ -357,6 +382,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [inquiries, setInquiries] = useState([]);
   const [tags, setTags] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [rooms, setRooms] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
 
   const [showBranchMenu, setShowBranchMenu] = useState(false);
@@ -377,7 +403,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [pendingCount, setPendingCount] = useState(queueCount());
   const [syncing, setSyncing] = useState(false);
 
-  function applyFetchedData(b, c, s, bk, inv, iq, t) {
+  function applyFetchedData(b, c, s, bk, inv, iq, t, rm) {
     const mapped = {
       branches: b ? b.map(mapBranch) : [],
       clients: c ? c.map(mapClient) : [],
@@ -386,6 +412,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       invoices: inv ? inv.map(mapInvoice) : [],
       inquiries: iq ? iq.map(mapInquiry) : [],
       tags: t ? t.map(mapTag) : [],
+      rooms: rm ? rm.map(mapRoom) : [],
     };
     setBranches(mapped.branches);
     setClients(mapped.clients);
@@ -394,6 +421,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     setInvoices(mapped.invoices);
     setInquiries(mapped.inquiries);
     setTags(mapped.tags);
+    setRooms(mapped.rooms);
     setBranchId((prev) => prev || mapped.branches[0]?.id || null);
     saveCache(mapped);
     setUsingCache(false);
@@ -401,7 +429,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
   async function fetchAll() {
     try {
-      const [b, c, s, bk, inv, iq, t] = await Promise.all([
+      const [b, c, s, bk, inv, iq, t, rm] = await Promise.all([
         supabase.from("branches").select("*"),
         supabase.rpc("get_clients"), // owner-only fields (id_type/id_number) come back null for staff
         supabase.from("services").select("*"),
@@ -409,9 +437,10 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         supabase.from("invoices").select("*"),
         supabase.from("inquiries").select("*"),
         supabase.from("tags").select("*"),
+        supabase.from("rooms").select("*"),
       ]);
       if (b.error) throw b.error;
-      applyFetchedData(b.data, c.data, s.data, bk.data, inv.data, iq.data, t.data);
+      applyFetchedData(b.data, c.data, s.data, bk.data, inv.data, iq.data, t.data, rm.data);
       setIsOnline(true);
     } catch (e) {
       // No connection (or Supabase unreachable) — fall back to whatever we last cached locally.
@@ -424,6 +453,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         setInvoices(cached.invoices || []);
         setInquiries(cached.inquiries || []);
         setTags(cached.tags || []);
+        setRooms(cached.rooms || []);
         setBranchId((prev) => prev || cached.branches?.[0]?.id || null);
         setUsingCache(true);
       }
@@ -606,9 +636,15 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const bInquiries = inBranch(inquiries);
   const bTags = inBranch(tags);
   const bInvoices = inBranch(invoices);
+  const bRooms = inBranch(rooms);
 
   const clientName = (id) => clients.find((c) => c.id === id)?.name || "—";
   const serviceNames = (ids) => ids.map((id) => services.find((s) => s.id === id)?.name).join(", ");
+  const roomLabel = (bk) => {
+    const room = rooms.find((r) => r.id === bk.roomId);
+    if (room) return `${room.roomNumber} · ${room.roomType}`;
+    return bk.roomNumber || "—";
+  };
 
   const revenue = bInvoices.filter((v) => v.status === "paid").reduce((sum, v) => sum + v.amount, 0);
   const outstanding = bInvoices.filter((v) => v.status === "outstanding").reduce((sum, v) => sum + v.amount, 0);
@@ -726,9 +762,13 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
   async function saveBookingEdit(id, updates) {
     if (role !== "owner") return; // enforced server-side too, via the booking_edit_guard trigger
+    if (!isRoomAvailable(updates.roomId, updates.checkIn, updates.checkOut, bBookings, id)) {
+      alert("That room is already booked for the selected dates. Please choose a different room or date range.");
+      return;
+    }
     const dbUpdates = {
       client_id: updates.clientId,
-      room_number: updates.roomNumber || null,
+      room_id: updates.roomId || null,
       service_ids: updates.serviceIds,
       check_in: updates.checkIn,
       check_out: updates.checkOut,
@@ -738,6 +778,10 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       const { error } = await supabase.from("bookings").update(dbUpdates).eq("id", id);
       if (error) throw error;
     } catch (e) {
+      if (e?.message?.includes("already booked")) {
+        alert("That room is already booked for the selected dates. Please choose a different room or date range.");
+        return;
+      }
       enqueueAction({ type: "editBooking", payload: { id, updates: dbUpdates } });
       setPendingCount(queueCount());
     }
@@ -782,11 +826,12 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     const checkoutDate = bk.checkOut && bk.checkOut !== "TBC" ? bk.checkOut : new Date(Date.now() + 86400000).toISOString().slice(0, 10);
     const expiresAt = `${checkoutDate}T12:00:00`;
     const inv = invoices.find((v) => v.bookingId === bk.id);
+    const room = rooms.find((r) => r.id === bk.roomId);
     const entry = {
       code,
       branch_id: branchId,
       guest_name: clientName(bk.clientId),
-      room_number: bk.roomNumber || null,
+      room_number: room ? room.roomNumber : (bk.roomNumber || null),
       service_names: serviceNames(bk.serviceIds),
       check_in: bk.checkIn,
       check_out: bk.checkOut,
@@ -1016,7 +1061,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                   {bBookings.map((bk) => (
                     <tr key={bk.id} style={{ borderTop: `1px solid ${C.line}` }}>
                       <td style={{ padding: "10px 0" }}>{clientName(bk.clientId)}</td>
-                      <td>{bk.roomNumber || "—"}</td>
+                      <td>{roomLabel(bk)}</td>
                       <td>{serviceNames(bk.serviceIds)}</td>
                       <td>{bk.checkIn} → {bk.checkOut}</td>
                       <td><StatusPicker value={bk.status} onChange={(s) => updateBookingStatus(bk.id, s)} /></td>
@@ -1072,6 +1117,9 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                       <div style={{ fontSize: "13px", color: C.inkSoft }}>{c.phone}</div>
                       {role === "owner" && c.idNumber && (
                         <div style={{ fontSize: "12px", color: C.inkSoft, marginTop: "4px" }}>{c.idType || "ID"}: {c.idNumber}</div>
+                      )}
+                      {role === "owner" && !c.idNumber && (
+                        <div style={{ fontSize: "11.5px", color: C.amber, marginTop: "4px" }}>ID not on file</div>
                       )}
                     </div>
                     {role === "owner" && (
@@ -1278,6 +1326,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         <AddBookingModal
           clients={bClients}
           services={bServices.filter((s) => !GUEST_REQUEST_CATEGORIES.includes(s.category))}
+          rooms={bRooms}
+          existingBookings={bBookings}
           onClose={() => setShowAddBooking(false)}
           onAddClient={async (newClient) => {
             const id = newId();
@@ -1296,10 +1346,14 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
             }
           }}
           onSave={async (newBooking) => {
+            if (!isRoomAvailable(newBooking.roomId, newBooking.checkIn, newBooking.checkOut, bBookings, null)) {
+              alert("That room is already booked for the selected dates. Please choose a different room or date range.");
+              return false;
+            }
             const payload = {
               branch_id: branchId,
               client_id: newBooking.clientId,
-              room_number: newBooking.roomNumber || null,
+              room_id: newBooking.roomId || null,
               service_ids: newBooking.serviceIds,
               check_in: newBooking.checkIn,
               check_out: newBooking.checkOut,
@@ -1310,11 +1364,16 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
               if (error) throw error;
               setBookings((prev) => [...prev, mapBooking(data)]);
             } catch (e) {
+              if (e?.message?.includes("already booked")) {
+                alert("That room is already booked for the selected dates. Please choose a different room or date range.");
+                return false;
+              }
               enqueueAction({ type: "addBooking", payload });
               setPendingCount(queueCount());
-              setBookings((prev) => [...prev, { id: "temp-" + Date.now(), branchId, clientId: newBooking.clientId, roomNumber: newBooking.roomNumber, serviceIds: newBooking.serviceIds, checkIn: newBooking.checkIn, checkOut: newBooking.checkOut, status: newBooking.status }]);
+              setBookings((prev) => [...prev, { id: "temp-" + Date.now(), branchId, clientId: newBooking.clientId, roomId: newBooking.roomId, serviceIds: newBooking.serviceIds, checkIn: newBooking.checkIn, checkOut: newBooking.checkOut, status: newBooking.status }]);
             }
             setShowAddBooking(false);
+            return true;
           }}
         />
       )}
@@ -1346,6 +1405,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           booking={editingBooking}
           clients={bClients}
           services={bServices.filter((s) => !GUEST_REQUEST_CATEGORIES.includes(s.category))}
+          rooms={bRooms}
+          existingBookings={bBookings}
           onClose={() => setEditingBooking(null)}
           onSave={(updates) => saveBookingEdit(editingBooking.id, updates)}
         />
@@ -1366,8 +1427,6 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     </div>
   );
 }
-
-const ID_TYPE_OPTIONS = ["NIDA", "Voting ID", "Driving License", "Passport"];
 
 function AddClientModal({ onClose, onSave }) {
   const [name, setName] = useState("");
@@ -1452,9 +1511,9 @@ function AddClientModal({ onClose, onSave }) {
    opens this and the underlying database write are gated to
    the owner role; staff never see this option).
 --------------------------------------------------------- */
-function EditBookingModal({ booking, clients, services, onClose, onSave }) {
+function EditBookingModal({ booking, clients, services, rooms, existingBookings, onClose, onSave }) {
   const [clientId, setClientId] = useState(booking.clientId);
-  const [roomNumber, setRoomNumber] = useState(booking.roomNumber || "");
+  const [roomId, setRoomId] = useState(booking.roomId || "");
   const [serviceIds, setServiceIds] = useState(booking.serviceIds);
   const [checkIn, setCheckIn] = useState(booking.checkIn === "TBC" ? "" : booking.checkIn);
   const [checkOut, setCheckOut] = useState(booking.checkOut === "TBC" ? "" : booking.checkOut);
@@ -1463,9 +1522,11 @@ function EditBookingModal({ booking, clients, services, onClose, onSave }) {
   const toggleService = (id) =>
     setServiceIds((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
 
+  const selectedRoom = rooms.find((r) => r.id === roomId);
+
   async function handleSave() {
     setSaving(true);
-    await onSave({ clientId, roomNumber: roomNumber.trim(), serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC" });
+    await onSave({ clientId, roomId: roomId || null, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC" });
     setSaving(false);
   }
 
@@ -1485,13 +1546,15 @@ function EditBookingModal({ booking, clients, services, onClose, onSave }) {
           {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
 
-        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Room number</label>
-        <input
-          value={roomNumber}
-          onChange={(e) => setRoomNumber(e.target.value)}
-          placeholder="e.g. Room 4"
-          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px", boxSizing: "border-box" }}
-        />
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Room</label>
+        <select value={roomId} onChange={(e) => setRoomId(e.target.value)} style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 6px", fontSize: "14px" }}>
+          <option value="">— Select a room —</option>
+          {rooms.map((r) => <option key={r.id} value={r.id}>{r.roomNumber} — {r.roomType}</option>)}
+        </select>
+        {selectedRoom && (
+          <p style={{ fontSize: "12px", color: C.inkSoft, margin: "0 0 14px" }}>Room type: <strong>{selectedRoom.roomType}</strong></p>
+        )}
+        {!selectedRoom && <div style={{ marginBottom: "14px" }} />}
 
         <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Services</label>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px", margin: "6px 0 14px" }}>
@@ -1535,16 +1598,21 @@ function EditBookingModal({ booking, clients, services, onClose, onSave }) {
   );
 }
 
-function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
+function AddBookingModal({ clients, services, rooms, existingBookings, onClose, onSave, onAddClient }) {
   const [clientQuery, setClientQuery] = useState("");
   const [phone, setPhone] = useState("");
-  const [roomNumber, setRoomNumber] = useState("");
+  const [showIdFields, setShowIdFields] = useState(false);
+  const [idType, setIdType] = useState("");
+  const [idNumber, setIdNumber] = useState("");
+  const [roomId, setRoomId] = useState("");
   const [serviceIds, setServiceIds] = useState([]);
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
   const [saving, setSaving] = useState(false);
 
   const matchedClient = clients.find((c) => c.name.trim().toLowerCase() === clientQuery.trim().toLowerCase());
+  const selectedRoom = rooms.find((r) => r.id === roomId);
+  const roomTaken = roomId && !isRoomAvailable(roomId, checkIn || null, checkOut || null, existingBookings, null);
 
   function handleQueryChange(value) {
     setClientQuery(value);
@@ -1555,7 +1623,7 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
   const toggleService = (id) =>
     setServiceIds((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
 
-  const canSave = clientQuery.trim().length > 0;
+  const canSave = clientQuery.trim().length > 0 && !roomTaken;
 
   async function handleSave() {
     setSaving(true);
@@ -1563,12 +1631,20 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
     if (matchedClient) {
       finalClientId = matchedClient.id;
     } else {
-      const created = await onAddClient({ name: clientQuery.trim(), phone: phone.trim() || "—" });
+      const created = await onAddClient({
+        name: clientQuery.trim(),
+        phone: phone.trim() || "—",
+        idType: showIdFields ? (idType || null) : null,
+        idNumber: showIdFields ? (idNumber.trim() || null) : null,
+      });
       if (!created) { setSaving(false); return; }
       finalClientId = created.id;
     }
-    await onSave({ clientId: finalClientId, roomNumber: roomNumber.trim(), serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC", status: "pending" });
+    const ok = await onSave({ clientId: finalClientId, roomId: roomId || null, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC", status: "pending" });
     setSaving(false);
+    // onSave returns false on a real conflict (e.g. room double-booked) — leave the
+    // modal open with what the person typed so they can just change the room/dates.
+    if (ok === false) return;
   }
 
   return (
@@ -1576,7 +1652,7 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
       position: "fixed", inset: 0, background: "rgba(22,35,59,0.35)",
       display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20
     }}>
-      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 92vw)" }}>
+      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 92vw)", maxHeight: "88vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
           <h3 className="fr" style={{ margin: 0, fontSize: "19px" }}>New booking</h3>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={18} /></button>
@@ -1602,19 +1678,72 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
           placeholder="e.g. +255 7XX XXX XXX"
           style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 4px", fontSize: "14px", boxSizing: "border-box" }}
         />
-        <p style={{ fontSize: "12px", color: C.inkSoft, margin: "0 0 14px" }}>
+        <p style={{ fontSize: "12px", color: C.inkSoft, margin: "0 0 10px" }}>
           {matchedClient ? "Existing client" : clientQuery.trim() ? "New client — will be added" : ""}
         </p>
 
-        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Room number</label>
-        <input
-          value={roomNumber}
-          onChange={(e) => setRoomNumber(e.target.value)}
-          placeholder="e.g. Room 4"
-          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px", boxSizing: "border-box" }}
-        />
+        {/* Middle-ground ID capture: collapsed by default so a fast walk-in booking
+            isn't slowed down, but one click away when staff want to record it now
+            instead of circling back to the Clients tab later. Only relevant for a
+            new client — an existing client's ID is managed from Clients. */}
+        {!matchedClient && clientQuery.trim() && (
+          <div style={{ marginBottom: "14px" }}>
+            {!showIdFields ? (
+              <button
+                type="button"
+                onClick={() => setShowIdFields(true)}
+                style={{ fontSize: "12.5px", border: `1px dashed ${C.line}`, background: "none", borderRadius: "6px", padding: "7px 11px", cursor: "pointer", color: C.clayDeep, width: "100%", textAlign: "left" }}
+              >
+                + Add ID info (optional)
+              </button>
+            ) : (
+              <div style={{ border: `1px solid ${C.line}`, borderRadius: "8px", padding: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                  <span style={{ fontSize: "12.5px", fontWeight: 500, color: C.inkSoft }}>ID info</span>
+                  <button type="button" onClick={() => { setShowIdFields(false); setIdType(""); setIdNumber(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.inkSoft }}>
+                    <X size={14} />
+                  </button>
+                </div>
+                <select
+                  value={idType}
+                  onChange={(e) => setIdType(e.target.value)}
+                  style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginBottom: "8px", fontSize: "13.5px", boxSizing: "border-box" }}
+                >
+                  <option value="">— ID type —</option>
+                  {ID_TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <input
+                  value={idNumber}
+                  onChange={(e) => setIdNumber(e.target.value)}
+                  placeholder="ID number"
+                  style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13.5px", boxSizing: "border-box" }}
+                />
+                <p style={{ fontSize: "11px", color: C.inkSoft, margin: "8px 0 0" }}>Only the owner will see this afterward.</p>
+              </div>
+            )}
+          </div>
+        )}
 
-        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Services</label>
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Room</label>
+        <select value={roomId} onChange={(e) => setRoomId(e.target.value)} style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 6px", fontSize: "14px" }}>
+          <option value="">— Select a room —</option>
+          {rooms.map((r) => {
+            const taken = !isRoomAvailable(r.id, checkIn || null, checkOut || null, existingBookings, null);
+            return (
+              <option key={r.id} value={r.id} disabled={taken}>
+                {r.roomNumber} — {r.roomType}{taken ? " (booked those dates)" : ""}
+              </option>
+            );
+          })}
+        </select>
+        {selectedRoom && (
+          <p style={{ fontSize: "12px", color: roomTaken ? C.red : C.inkSoft, margin: "0 0 14px" }}>
+            {roomTaken ? "This room is already booked for those dates." : `Room type: ${selectedRoom.roomType}`}
+          </p>
+        )}
+        {!selectedRoom && <div style={{ marginBottom: "14px" }} />}
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Services (accommodation & transport)</label>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px", margin: "6px 0 14px" }}>
           {services.map((s) => (
             <label key={s.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13.5px" }}>
@@ -1622,7 +1751,13 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
               {s.name} — {money(s.price)}{s.billingUnit === "per_night" ? "/night" : ""}
             </label>
           ))}
+          {services.length === 0 && (
+            <span style={{ fontSize: "12.5px", color: C.inkSoft }}>No accommodation or transport items set up yet.</span>
+          )}
         </div>
+        <p style={{ fontSize: "11px", color: C.inkSoft, margin: "-8px 0 14px" }}>
+          Food, drinks, and laundry are ordered by the guest after check-in, from the Guest portal.
+        </p>
 
         <div style={{ display: "flex", gap: "10px", marginBottom: "18px" }}>
           <div style={{ flex: 1 }}>
@@ -1634,6 +1769,9 @@ function AddBookingModal({ clients, services, onClose, onSave, onAddClient }) {
             <input type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
           </div>
         </div>
+        <p style={{ fontSize: "11px", color: C.inkSoft, margin: "-12px 0 14px" }}>
+          A same-day check-in/check-out leaves the room vacant that night, so it won't block another booking.
+        </p>
 
         <button
           disabled={!canSave || saving}
@@ -2166,7 +2304,7 @@ function GuestApp({ onExit, initialCode }) {
                 {activeCategory === "Kitchen" && "Pick a quantity and send your order to the kitchen."}
                 {activeCategory === "Counter" && "Requested items are ready for pickup at the counter."}
                 {activeCategory === "Amenities" && "Tap to request any item — the front desk will bring it to you."}
-                {activeCategory === "Laundry" && "Ironing is complimentary for guests — just ask."}
+                {activeCategory === "Laundry" && "Laundry is available for a fee — ironing is complimentary."}
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 {guestServices.filter((item) => item.category === activeCategory).map((item) => {
