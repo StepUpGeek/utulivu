@@ -54,6 +54,7 @@ const mapInvoice = (r) => ({ id: r.id, branchId: r.branch_id, bookingId: r.booki
 const mapInquiry = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, message: r.message, status: r.status });
 const mapTag = (r) => ({ id: r.id, branchId: r.branch_id, label: r.label, type: r.type, linkedName: r.linked_name, lastScan: r.last_scan });
 const mapRoom = (r) => ({ id: r.id, branchId: r.branch_id, roomNumber: r.room_number, roomType: r.room_type });
+const mapRoomRate = (r) => ({ branchId: r.branch_id, roomType: r.room_type, nightlyRate: Number(r.nightly_rate) || 0 });
 const mapSubscriber = (r) => ({ id: r.id, name: r.name, tier: r.tier, branches: r.branches, activeBookings: r.active_bookings, subStatus: r.sub_status, mrr: r.mrr });
 
 const TIER_OPTIONS = ["Essentials", "Growth", "Full Suite"];
@@ -63,6 +64,17 @@ const TIER_OPTIONS = ["Essentials", "Growth", "Full Suite"];
 const GUEST_REQUEST_CATEGORIES = ["Amenities", "Kitchen", "Counter", "Laundry"];
 
 const ID_TYPE_OPTIONS = ["NIDA", "Voting ID", "Driving License", "Passport"];
+
+// Kitchen/Counter requests go through a richer, multi-step timeline (the guest
+// is waiting on something being prepared, so "where is it" genuinely matters).
+// Everything else — Amenities, Laundry, free-text messages, airtime — uses a
+// single-tap "handled → received" loop, since the journey is short enough that
+// extra stages wouldn't add real information.
+const RICH_STAGE_CATEGORIES = ["Kitchen", "Counter"];
+const RICH_STAGES = ["sent", "preparing", "delivered", "confirmed"];
+const SIMPLE_STAGES = ["sent", "handled", "received"];
+const RICH_STAGE_LABELS = { sent: "Sent", preparing: "Preparing", delivered: "Delivered", confirmed: "Confirmed" };
+const SIMPLE_STAGE_LABELS = { sent: "Sent", handled: "Handled", received: "Received" };
 
 // Generates a client's real id up front instead of waiting on a DB round-trip
 // so an offline-queued insert doesn't need a follow-up read — which matters
@@ -108,6 +120,15 @@ function isRoomAvailable(roomId, checkIn, checkOut, existingBookings, excludeBoo
     const bOut = new Date(b.checkOut).getTime();
     return newIn < bOut && bIn < newOut; // classic range overlap
   });
+}
+
+// Looks up the nightly rate for a room's type at a branch. Every room of the
+// same type at the same branch shares one rate — the room dropdown is the
+// only place accommodation price comes from now, there's no separate checkbox.
+function rateForRoom(room, roomRates) {
+  if (!room) return 0;
+  const match = roomRates.find((rr) => rr.branchId === room.branchId && rr.roomType === room.roomType);
+  return match ? match.nightlyRate : 0;
 }
 
 function useIsMobile() {
@@ -383,6 +404,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [tags, setTags] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [rooms, setRooms] = useState([]);
+  const [roomRates, setRoomRates] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
 
   const [showBranchMenu, setShowBranchMenu] = useState(false);
@@ -403,7 +425,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [pendingCount, setPendingCount] = useState(queueCount());
   const [syncing, setSyncing] = useState(false);
 
-  function applyFetchedData(b, c, s, bk, inv, iq, t, rm) {
+  function applyFetchedData(b, c, s, bk, inv, iq, t, rm, rr) {
     const mapped = {
       branches: b ? b.map(mapBranch) : [],
       clients: c ? c.map(mapClient) : [],
@@ -413,6 +435,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       inquiries: iq ? iq.map(mapInquiry) : [],
       tags: t ? t.map(mapTag) : [],
       rooms: rm ? rm.map(mapRoom) : [],
+      roomRates: rr ? rr.map(mapRoomRate) : [],
     };
     setBranches(mapped.branches);
     setClients(mapped.clients);
@@ -422,6 +445,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     setInquiries(mapped.inquiries);
     setTags(mapped.tags);
     setRooms(mapped.rooms);
+    setRoomRates(mapped.roomRates);
     setBranchId((prev) => prev || mapped.branches[0]?.id || null);
     saveCache(mapped);
     setUsingCache(false);
@@ -429,7 +453,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
   async function fetchAll() {
     try {
-      const [b, c, s, bk, inv, iq, t, rm] = await Promise.all([
+      const [b, c, s, bk, inv, iq, t, rm, rr] = await Promise.all([
         supabase.from("branches").select("*"),
         supabase.rpc("get_clients"), // owner-only fields (id_type/id_number) come back null for staff
         supabase.from("services").select("*"),
@@ -438,9 +462,10 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         supabase.from("inquiries").select("*"),
         supabase.from("tags").select("*"),
         supabase.from("rooms").select("*"),
+        supabase.from("room_rates").select("*"),
       ]);
       if (b.error) throw b.error;
-      applyFetchedData(b.data, c.data, s.data, bk.data, inv.data, iq.data, t.data, rm.data);
+      applyFetchedData(b.data, c.data, s.data, bk.data, inv.data, iq.data, t.data, rm.data, rr.data);
       setIsOnline(true);
     } catch (e) {
       // No connection (or Supabase unreachable) — fall back to whatever we last cached locally.
@@ -454,6 +479,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         setInquiries(cached.inquiries || []);
         setTags(cached.tags || []);
         setRooms(cached.rooms || []);
+        setRoomRates(cached.roomRates || []);
         setBranchId((prev) => prev || cached.branches?.[0]?.id || null);
         setUsingCache(true);
       }
@@ -599,10 +625,14 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
-  async function markRequestHandled(id) {
-    setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: "handled" } : r)));
+  // Advances a request's stage from the provider side. Kitchen/Counter items
+  // move sent → preparing → delivered (the final "confirmed" step belongs to
+  // the guest). Everything else moves sent → handled (the guest then confirms
+  // "received" from their own portal).
+  async function advanceRequestStage(id, nextStage) {
+    setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, stage: nextStage } : r)));
     try {
-      const { error } = await supabase.from("service_requests").update({ status: "handled" }).eq("id", id);
+      const { error } = await supabase.from("service_requests").update({ stage: nextStage }).eq("id", id);
       if (error) throw error;
     } catch (e) {
       // handled locally; will reconcile next successful fetch — request-handling isn't queued
@@ -714,12 +744,15 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
     if (status === "confirmed" && !existingInvoice) {
       const nights = nightsBetween(bk.checkIn, bk.checkOut);
-      const amount = bk.serviceIds.reduce((sum, sid) => {
+      const room = rooms.find((r) => r.id === bk.roomId);
+      const accommodationAmount = rateForRoom(room, roomRates) * nights;
+      const servicesAmount = bk.serviceIds.reduce((sum, sid) => {
         const svc = services.find((s) => s.id === sid);
         if (!svc) return sum;
         const qty = svc.billingUnit === "per_night" ? nights : 1;
         return sum + svc.price * qty;
       }, 0);
+      const amount = accommodationAmount + servicesAmount;
       const payload = { branch_id: branchId, booking_id: id, amount, status: "outstanding" };
       try {
         const { data, error } = await supabase.from("invoices").insert(payload).select().single();
@@ -832,6 +865,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       branch_id: branchId,
       guest_name: clientName(bk.clientId),
       room_number: room ? room.roomNumber : (bk.roomNumber || null),
+      room_type: room ? room.roomType : null,
       service_names: serviceNames(bk.serviceIds),
       check_in: bk.checkIn,
       check_out: bk.checkOut,
@@ -845,7 +879,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     if (ok) setGeneratedCode(entry);
   }
 
-  const newRequestCount = requests.filter((r) => r.status === "new").length;
+  const newRequestCount = requests.filter((r) => (r.stage || "sent") === "sent").length;
 
   const NAV = [
     { id: "dashboard", label: "Dashboard", icon: LayoutGrid },
@@ -1008,28 +1042,70 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                 <p style={{ fontSize: "13.5px", color: C.inkSoft }}>No requests yet. Try sending one from the Guest portal.</p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                  {requests.map((r) => (
-                    <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px", border: `1px solid ${C.line}`, borderRadius: "9px" }}>
-                      <div>
-                        <div style={{ fontSize: "14px", fontWeight: 500 }}>
-                          {r.message}{r.quantity > 1 ? ` (× ${r.quantity})` : ""}
-                        </div>
-                        <div style={{ fontSize: "12px", color: C.inkSoft, marginTop: "3px" }}>
-                          {new Date(r.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+                  {requests.map((r) => {
+                    const isRich = RICH_STAGE_CATEGORIES.includes(r.category);
+                    const stage = r.stage || "sent";
+                    const roomHeader = r.room_number
+                      ? `Room ${r.room_number}${r.room_type ? " · " + r.room_type : ""} — ${r.guest_name || "Guest"}`
+                      : (r.guest_name || "Guest");
+                    return (
+                      <div key={r.id} style={{ padding: "12px", border: `1px solid ${C.line}`, borderRadius: "9px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}>
+                          <div>
+                            <div style={{ fontSize: "13.5px", fontWeight: 600, color: C.ink }}>{roomHeader}</div>
+                            <div style={{ fontSize: "14px", marginTop: "2px" }}>
+                              {r.message}{r.quantity > 1 ? ` (× ${r.quantity})` : ""}
+                            </div>
+                            <div style={{ fontSize: "12px", color: C.inkSoft, marginTop: "3px" }}>
+                              {new Date(r.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: "right", flexShrink: 0 }}>
+                            {isRich ? (
+                              <>
+                                <Pill tone={stage === "confirmed" ? "completed" : stage === "delivered" ? "confirmed" : "pending"}>
+                                  {RICH_STAGE_LABELS[stage] || stage}
+                                </Pill>
+                                <div style={{ marginTop: "8px" }}>
+                                  {stage === "sent" && (
+                                    <button onClick={() => advanceRequestStage(r.id, "preparing")} style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}>
+                                      Start preparing
+                                    </button>
+                                  )}
+                                  {stage === "preparing" && (
+                                    <button onClick={() => advanceRequestStage(r.id, "delivered")} style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}>
+                                      Mark delivered
+                                    </button>
+                                  )}
+                                  {stage === "delivered" && (
+                                    <div style={{ fontSize: "11.5px", color: C.inkSoft }}>Awaiting guest confirmation</div>
+                                  )}
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                {stage === "received" ? (
+                                  <Pill tone="completed">Received by guest</Pill>
+                                ) : stage === "handled" ? (
+                                  <>
+                                    <Pill tone="pending">Handled</Pill>
+                                    <div style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "6px" }}>Awaiting guest confirmation</div>
+                                  </>
+                                ) : (
+                                  <button
+                                    onClick={() => advanceRequestStage(r.id, "handled")}
+                                    style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}
+                                  >
+                                    Mark handled
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
-                      {r.status === "handled" ? (
-                        <Pill tone="completed">handled</Pill>
-                      ) : (
-                        <button
-                          onClick={() => markRequestHandled(r.id)}
-                          style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}
-                        >
-                          Mark handled
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </Panel>
@@ -1183,6 +1259,33 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                 </tbody>
               </table>
               </div>
+              <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: `1px solid ${C.line}` }}>
+                <h4 className="fr" style={{ margin: "0 0 10px", fontSize: "15px", fontWeight: 500, color: C.ink }}>Room rates</h4>
+                <p style={{ fontSize: "12.5px", color: C.inkSoft, margin: "0 0 12px" }}>
+                  Accommodation is priced automatically from these rates once a room is picked on a booking — there's no separate room line item to select.
+                </p>
+                <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", color: C.inkSoft, fontSize: "12.5px" }}>
+                      <th style={{ paddingBottom: "10px" }}>Room type</th>
+                      <th>Nightly rate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {roomRates.filter((rr) => rr.branchId === branchId).map((rr) => (
+                      <tr key={rr.roomType} style={{ borderTop: `1px solid ${C.line}` }}>
+                        <td style={{ padding: "10px 0" }}>{rr.roomType}</td>
+                        <td>{money(rr.nightlyRate)}/night</td>
+                      </tr>
+                    ))}
+                    {roomRates.filter((rr) => rr.branchId === branchId).length === 0 && (
+                      <tr><td colSpan={2} style={{ padding: "10px 0", color: C.inkSoft }}>No room rates set up yet — add them in the room_rates table in Supabase.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+                </div>
+              </div>
             </Panel>
           )}
 
@@ -1317,6 +1420,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           clientName={clientName}
           serviceNames={serviceNames}
           services={services}
+          rooms={rooms}
+          roomRates={roomRates}
           onClose={() => setPrintInvoice(null)}
         />
       )}
@@ -1327,6 +1432,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           clients={bClients}
           services={bServices.filter((s) => !GUEST_REQUEST_CATEGORIES.includes(s.category))}
           rooms={bRooms}
+          roomRates={roomRates}
           existingBookings={bBookings}
           onClose={() => setShowAddBooking(false)}
           onAddClient={async (newClient) => {
@@ -1406,6 +1512,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           clients={bClients}
           services={bServices.filter((s) => !GUEST_REQUEST_CATEGORIES.includes(s.category))}
           rooms={bRooms}
+          roomRates={roomRates}
           existingBookings={bBookings}
           onClose={() => setEditingBooking(null)}
           onSave={(updates) => saveBookingEdit(editingBooking.id, updates)}
@@ -1511,7 +1618,7 @@ function AddClientModal({ onClose, onSave }) {
    opens this and the underlying database write are gated to
    the owner role; staff never see this option).
 --------------------------------------------------------- */
-function EditBookingModal({ booking, clients, services, rooms, existingBookings, onClose, onSave }) {
+function EditBookingModal({ booking, clients, services, rooms, roomRates, existingBookings, onClose, onSave }) {
   const [clientId, setClientId] = useState(booking.clientId);
   const [roomId, setRoomId] = useState(booking.roomId || "");
   const [serviceIds, setServiceIds] = useState(booking.serviceIds);
@@ -1523,6 +1630,8 @@ function EditBookingModal({ booking, clients, services, rooms, existingBookings,
     setServiceIds((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
 
   const selectedRoom = rooms.find((r) => r.id === roomId);
+  const nights = checkIn && checkOut ? nightsBetween(checkIn, checkOut) : 1;
+  const accommodationTotal = rateForRoom(selectedRoom, roomRates) * nights;
 
   async function handleSave() {
     setSaving(true);
@@ -1551,12 +1660,15 @@ function EditBookingModal({ booking, clients, services, rooms, existingBookings,
           <option value="">— Select a room —</option>
           {rooms.map((r) => <option key={r.id} value={r.id}>{r.roomNumber} — {r.roomType}</option>)}
         </select>
-        {selectedRoom && (
-          <p style={{ fontSize: "12px", color: C.inkSoft, margin: "0 0 14px" }}>Room type: <strong>{selectedRoom.roomType}</strong></p>
+        {selectedRoom ? (
+          <p style={{ fontSize: "12px", color: C.inkSoft, margin: "0 0 14px" }}>
+            {selectedRoom.roomType} · {money(rateForRoom(selectedRoom, roomRates))}/night{checkIn && checkOut ? ` × ${nights} nights = ${money(accommodationTotal)}` : ""}
+          </p>
+        ) : (
+          <div style={{ marginBottom: "14px" }} />
         )}
-        {!selectedRoom && <div style={{ marginBottom: "14px" }} />}
 
-        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Services</label>
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Additional services (e.g. transport)</label>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px", margin: "6px 0 14px" }}>
           {services.map((s) => (
             <label key={s.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13.5px" }}>
@@ -1598,7 +1710,7 @@ function EditBookingModal({ booking, clients, services, rooms, existingBookings,
   );
 }
 
-function AddBookingModal({ clients, services, rooms, existingBookings, onClose, onSave, onAddClient }) {
+function AddBookingModal({ clients, services, rooms, roomRates, existingBookings, onClose, onSave, onAddClient }) {
   const [clientQuery, setClientQuery] = useState("");
   const [phone, setPhone] = useState("");
   const [showIdFields, setShowIdFields] = useState(false);
@@ -1613,6 +1725,8 @@ function AddBookingModal({ clients, services, rooms, existingBookings, onClose, 
   const matchedClient = clients.find((c) => c.name.trim().toLowerCase() === clientQuery.trim().toLowerCase());
   const selectedRoom = rooms.find((r) => r.id === roomId);
   const roomTaken = roomId && !isRoomAvailable(roomId, checkIn || null, checkOut || null, existingBookings, null);
+  const nights = checkIn && checkOut ? nightsBetween(checkIn, checkOut) : 1;
+  const accommodationTotal = rateForRoom(selectedRoom, roomRates) * nights;
 
   function handleQueryChange(value) {
     setClientQuery(value);
@@ -1731,19 +1845,21 @@ function AddBookingModal({ clients, services, rooms, existingBookings, onClose, 
             const taken = !isRoomAvailable(r.id, checkIn || null, checkOut || null, existingBookings, null);
             return (
               <option key={r.id} value={r.id} disabled={taken}>
-                {r.roomNumber} — {r.roomType}{taken ? " (booked those dates)" : ""}
+                {r.roomNumber} — {r.roomType} ({money(rateForRoom(r, roomRates))}/night){taken ? " (booked those dates)" : ""}
               </option>
             );
           })}
         </select>
         {selectedRoom && (
           <p style={{ fontSize: "12px", color: roomTaken ? C.red : C.inkSoft, margin: "0 0 14px" }}>
-            {roomTaken ? "This room is already booked for those dates." : `Room type: ${selectedRoom.roomType}`}
+            {roomTaken
+              ? "This room is already booked for those dates."
+              : `${selectedRoom.roomType} · ${money(rateForRoom(selectedRoom, roomRates))}/night${checkIn && checkOut ? ` × ${nights} nights = ${money(accommodationTotal)}` : ""}`}
           </p>
         )}
         {!selectedRoom && <div style={{ marginBottom: "14px" }} />}
 
-        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Services (accommodation & transport)</label>
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Additional services (e.g. transport)</label>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px", margin: "6px 0 14px" }}>
           {services.map((s) => (
             <label key={s.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13.5px" }}>
@@ -1752,11 +1868,11 @@ function AddBookingModal({ clients, services, rooms, existingBookings, onClose, 
             </label>
           ))}
           {services.length === 0 && (
-            <span style={{ fontSize: "12.5px", color: C.inkSoft }}>No accommodation or transport items set up yet.</span>
+            <span style={{ fontSize: "12.5px", color: C.inkSoft }}>No add-on services set up yet.</span>
           )}
         </div>
         <p style={{ fontSize: "11px", color: C.inkSoft, margin: "-8px 0 14px" }}>
-          Food, drinks, and laundry are ordered by the guest after check-in, from the Guest portal.
+          Room cost is calculated automatically from the room picked above. Food, drinks, and laundry are ordered by the guest after check-in, from the Guest portal.
         </p>
 
         <div style={{ display: "flex", gap: "10px", marginBottom: "18px" }}>
@@ -1800,10 +1916,12 @@ function AddBookingModal({ clients, services, rooms, existingBookings, onClose, 
    shows only the invoice itself (everything else on the page
    is hidden via the print stylesheet below).
 --------------------------------------------------------- */
-function InvoicePrintModal({ data, branch, clientName, serviceNames, services, onClose }) {
+function InvoicePrintModal({ data, branch, clientName, serviceNames, services, rooms, roomRates, onClose }) {
   const { invoice, booking } = data;
-  const lines = booking ? booking.serviceIds.map((id) => services.find((s) => s.id === id)).filter(Boolean) : [];
+  const room = booking ? rooms.find((r) => r.id === booking.roomId) : null;
   const nights = booking ? nightsBetween(booking.checkIn, booking.checkOut) : 1;
+  const accommodationTotal = rateForRoom(room, roomRates) * nights;
+  const lines = booking ? booking.serviceIds.map((id) => services.find((s) => s.id === id)).filter(Boolean) : [];
   const today = new Date().toLocaleDateString([], { dateStyle: "medium" });
 
   return (
@@ -1849,6 +1967,12 @@ function InvoicePrintModal({ data, branch, clientName, serviceNames, services, o
               </tr>
             </thead>
             <tbody>
+              {room && (
+                <tr style={{ borderBottom: `1px solid ${C.line}` }}>
+                  <td style={{ padding: "7px 0" }}>{room.roomType} room ({room.roomNumber}){nights > 1 ? ` × ${nights} nights` : ""}</td>
+                  <td style={{ padding: "7px 0", textAlign: "right" }}>{money(accommodationTotal)}</td>
+                </tr>
+              )}
               {lines.length > 0 ? lines.map((s) => {
                 const qty = s.billingUnit === "per_night" ? nights : 1;
                 return (
@@ -1857,9 +1981,9 @@ function InvoicePrintModal({ data, branch, clientName, serviceNames, services, o
                     <td style={{ padding: "7px 0", textAlign: "right" }}>{money(s.price * qty)}</td>
                   </tr>
                 );
-              }) : (
+              }) : (!room && (
                 <tr><td colSpan={2} style={{ padding: "7px 0", color: C.inkSoft }}>{booking ? serviceNames(booking.serviceIds) : "—"}</td></tr>
-              )}
+              ))}
             </tbody>
           </table>
 
@@ -2103,6 +2227,8 @@ function GuestApp({ onExit, initialCode }) {
   const [customMessage, setCustomMessage] = useState("");
   const [customSending, setCustomSending] = useState(false);
   const [customSent, setCustomSent] = useState(false);
+  const [myRequests, setMyRequests] = useState([]);
+  const [confirmingId, setConfirmingId] = useState(null);
 
   useEffect(() => {
     if (startCode) lookup(startCode, { silent: Boolean(!initialCode && savedCode) });
@@ -2130,6 +2256,26 @@ function GuestApp({ onExit, initialCode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
+  // The guest's own request history — fetched through a guarded RPC (rather
+  // than a direct table select) so a guest can only ever see requests tied to
+  // their own code, without needing a broad anon read policy on the table.
+  // Realtime isn't available here for the same reason, so this polls lightly
+  // instead — fine at this volume, and it keeps "is my food coming" fresh
+  // without opening up other guests' requests to anyone holding an anon key.
+  async function fetchMyRequests() {
+    if (!session?.access?.code) return;
+    const { data } = await supabase.rpc("get_my_requests", { p_code: session.access.code });
+    if (data) setMyRequests(data);
+  }
+
+  useEffect(() => {
+    if (!session?.access?.code) return;
+    fetchMyRequests();
+    const interval = setInterval(fetchMyRequests, 12000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+
   async function requestItem(item) {
     setSendingId(item.id);
     const qty = item.category === "Kitchen" ? (quantities[item.id] || 1) : 1;
@@ -2139,11 +2285,15 @@ function GuestApp({ onExit, initialCode }) {
     await supabase.from("service_requests").insert({
       code: session.access.code,
       guest_name: session.access.guest_name,
+      room_number: session.access.room_number || null,
+      room_type: session.access.room_type || null,
+      category: item.category,
       quantity: qty,
       message: `${session.access.guest_name} requested ${item.name}${qtyLabel}${pickupNote} (${priceLabel})`,
     });
     setSendingId(null);
     setRequestedIds((prev) => [...prev, item.id]);
+    fetchMyRequests();
   }
 
   async function sendCustomMessage() {
@@ -2152,12 +2302,34 @@ function GuestApp({ onExit, initialCode }) {
     await supabase.from("service_requests").insert({
       code: session.access.code,
       guest_name: session.access.guest_name,
+      room_number: session.access.room_number || null,
+      room_type: session.access.room_type || null,
+      category: "General",
       message: customMessage.trim(),
     });
     setCustomSending(false);
     setCustomSent(true);
     setCustomMessage("");
     setTimeout(() => setCustomSent(false), 2500);
+    fetchMyRequests();
+  }
+
+  // The simple loop's "Mark as received" and the rich loop's final "Confirm
+  // received" both call this — it's the guest's own capability, so it goes
+  // through a security-definer RPC that checks the code matches the request
+  // rather than a broad UPDATE grant on the whole table.
+  async function confirmRequest(request) {
+    const isRich = RICH_STAGE_CATEGORIES.includes(request.category);
+    const finalStage = isRich ? "confirmed" : "received";
+    setConfirmingId(request.id);
+    setMyRequests((prev) => prev.map((r) => (r.id === request.id ? { ...r, stage: finalStage } : r)));
+    try {
+      await supabase.rpc("guest_confirm_request", { p_id: request.id, p_code: session.access.code, p_stage: finalStage });
+    } catch (e) {
+      // will reconcile on next poll
+    }
+    setConfirmingId(null);
+    fetchMyRequests();
   }
 
   async function lookup(rawCode, opts = {}) {
@@ -2252,31 +2424,37 @@ function GuestApp({ onExit, initialCode }) {
           </div>
         )}
 
+        {/* Booking and Invoice merged into one panel — it's really one piece of
+            information ("here's your stay, here's what you owe"), and splitting
+            it into two headered panels was just wasted vertical space. */}
         <Panel title="Booking">
           <div style={{ fontSize: "14px", lineHeight: 1.8 }}>
             {access.room_number && (
               <div style={{ marginBottom: "8px" }}>
                 <span style={{ fontSize: "12px", color: C.inkSoft }}>Your room</span>
-                <div className="fr" style={{ fontSize: "22px", fontWeight: 500, color: C.ink }}>{access.room_number}</div>
+                <div className="fr" style={{ fontSize: "22px", fontWeight: 500, color: C.ink }}>
+                  {access.room_number}{access.room_type ? ` · ${access.room_type}` : ""}
+                </div>
               </div>
             )}
             <div><strong>{access.service_names}</strong></div>
             <div style={{ color: C.inkSoft }}>{access.check_in} → {access.check_out}</div>
             <div style={{ marginTop: "6px" }}><Pill tone={access.status}>{access.status}</Pill></div>
           </div>
-        </Panel>
 
-        <div style={{ height: "14px" }} />
-
-        <Panel title="Invoice">
-          {access.invoice_amount != null ? (
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "14px" }}>
-              <span>{money(access.invoice_amount)}</span>
-              <Pill tone={access.invoice_status}>{access.invoice_status}</Pill>
-            </div>
-          ) : (
-            <span style={{ fontSize: "13.5px", color: C.inkSoft }}>No invoice on file yet.</span>
-          )}
+          <div style={{ borderTop: `1px solid ${C.line}`, marginTop: "14px", paddingTop: "14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            {access.invoice_amount != null ? (
+              <>
+                <span style={{ fontSize: "13px", color: C.inkSoft }}>Amount due</span>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "15px", fontWeight: 500 }}>{money(access.invoice_amount)}</span>
+                  <Pill tone={access.invoice_status}>{access.invoice_status}</Pill>
+                </div>
+              </>
+            ) : (
+              <span style={{ fontSize: "13.5px", color: C.inkSoft }}>No invoice on file yet.</span>
+            )}
+          </div>
         </Panel>
 
         <div style={{ height: "14px" }} />
@@ -2353,6 +2531,64 @@ function GuestApp({ onExit, initialCode }) {
           </>
         )}
 
+        {myRequests.length > 0 && (
+          <>
+            <Panel title="Your requests">
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {myRequests.map((r) => {
+                  const isRich = RICH_STAGE_CATEGORIES.includes(r.category);
+                  const stage = r.stage || "sent";
+                  return (
+                    <div key={r.id} style={{ border: `1px solid ${C.line}`, borderRadius: "8px", padding: "12px" }}>
+                      <div style={{ fontSize: "13.5px", fontWeight: 500 }}>
+                        {r.message}{r.quantity > 1 ? ` (× ${r.quantity})` : ""}
+                      </div>
+                      {isRich ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "8px", flexWrap: "wrap" }}>
+                          {RICH_STAGES.map((s, i) => {
+                            const reached = RICH_STAGES.indexOf(stage) >= i;
+                            return (
+                              <span key={s} style={{
+                                fontSize: "11px", fontWeight: 500, padding: "3px 9px", borderRadius: "999px",
+                                background: reached ? C.signalSoft : C.line, color: reached ? "#1E6E67" : C.inkSoft
+                              }}>
+                                {RICH_STAGE_LABELS[s]}
+                              </span>
+                            );
+                          })}
+                          {stage === "delivered" && (
+                            <button
+                              disabled={confirmingId === r.id}
+                              onClick={() => confirmRequest(r)}
+                              style={{ fontSize: "12px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "5px 11px", cursor: "pointer", marginLeft: "auto" }}
+                            >
+                              {confirmingId === r.id ? "Confirming…" : "Confirm received"}
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "8px" }}>
+                          <span style={{ fontSize: "11.5px", color: C.inkSoft }}>{SIMPLE_STAGE_LABELS[stage] || stage}</span>
+                          {stage === "handled" && (
+                            <button
+                              disabled={confirmingId === r.id}
+                              onClick={() => confirmRequest(r)}
+                              style={{ fontSize: "12px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "5px 11px", cursor: "pointer" }}
+                            >
+                              {confirmingId === r.id ? "Confirming…" : "Mark as received"}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </Panel>
+            <div style={{ height: "14px" }} />
+          </>
+        )}
+
         <Panel title="Need something?">
           <div style={{ marginBottom: "16px", paddingBottom: "16px", borderBottom: `1px solid ${C.line}` }}>
             <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px", color: C.ink }}>Airtime top-up</p>
@@ -2393,6 +2629,9 @@ function GuestApp({ onExit, initialCode }) {
                       await supabase.from("service_requests").insert({
                         code: access.code,
                         guest_name: access.guest_name,
+                        room_number: access.room_number || null,
+                        room_type: access.room_type || null,
+                        category: "Airtime",
                         network: airtimeNetwork,
                         phone: airtimePhone.trim(),
                         amount: Number(airtimeAmount),
@@ -2400,6 +2639,7 @@ function GuestApp({ onExit, initialCode }) {
                       });
                       setAirtimeSending(false);
                       setAirtimeSent(true);
+                      fetchMyRequests();
                     }}
                     style={{
                       padding: "9px 14px", borderRadius: "7px", border: "none", fontSize: "13.5px", whiteSpace: "nowrap",
