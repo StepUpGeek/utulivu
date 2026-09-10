@@ -47,7 +47,7 @@ const FONTS = (
    need to change.
 --------------------------------------------------------- */
 const mapBranch = (r) => ({ id: r.id, name: r.name, location: r.location });
-const mapClient = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, phone: r.phone });
+const mapClient = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, phone: r.phone, idType: r.id_type || null, idNumber: r.id_number || null });
 const mapService = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, price: r.price, category: r.category, billingUnit: r.billing_unit || "flat" });
 const mapBooking = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, serviceIds: r.service_ids || [], checkIn: r.check_in, checkOut: r.check_out, status: r.status, roomNumber: r.room_number || "" });
 const mapInvoice = (r) => ({ id: r.id, branchId: r.branch_id, bookingId: r.booking_id, amount: r.amount, status: r.status });
@@ -56,6 +56,19 @@ const mapTag = (r) => ({ id: r.id, branchId: r.branch_id, label: r.label, type: 
 const mapSubscriber = (r) => ({ id: r.id, name: r.name, tier: r.tier, branches: r.branches, activeBookings: r.active_bookings, subStatus: r.sub_status, mrr: r.mrr });
 
 const TIER_OPTIONS = ["Essentials", "Growth", "Full Suite"];
+
+// Services in these categories are guest self-serve requests (ordered from
+// the Guest portal after check-in), not line items a client picks at booking time.
+const GUEST_REQUEST_CATEGORIES = ["Amenities", "Kitchen", "Counter", "Laundry"];
+
+// Generates a client's real id up front instead of waiting on a DB round-trip
+// so an offline-queued insert doesn't need a follow-up read — which matters
+// now that direct client reads are owner-only (see get_clients() in Supabase).
+function newId() {
+  return typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : "id-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+}
 
 /* Guest access codes and service requests also live in Supabase —
    see src/supabaseClient.js. This makes a code generated on one
@@ -390,7 +403,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     try {
       const [b, c, s, bk, inv, iq, t] = await Promise.all([
         supabase.from("branches").select("*"),
-        supabase.from("clients").select("*"),
+        supabase.rpc("get_clients"), // owner-only fields (id_type/id_number) come back null for staff
         supabase.from("services").select("*"),
         supabase.from("bookings").select("*"),
         supabase.from("invoices").select("*"),
@@ -426,17 +439,15 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       return;
     }
     setSyncing(true);
-    const idMap = {}; // maps a temporary offline id -> the real id Supabase assigns
     for (const action of queue) {
       try {
         if (action.type === "addClient") {
-          const { data, error } = await supabase.from("clients").insert(action.payload).select().single();
+          // payload already carries the real client id (generated client-side),
+          // so no read-back is needed — good, since staff can't SELECT clients directly.
+          const { error } = await supabase.from("clients").insert(action.payload);
           if (error) throw error;
-          idMap[action.tempId] = data.id;
         } else if (action.type === "addBooking") {
-          const payload = { ...action.payload };
-          if (idMap[payload.client_id]) payload.client_id = idMap[payload.client_id];
-          const { error } = await supabase.from("bookings").insert(payload);
+          const { error } = await supabase.from("bookings").insert(action.payload);
           if (error) throw error;
         } else if (action.type === "updateBookingStatus") {
           const { error } = await supabase.from("bookings").update({ status: action.payload.status }).eq("id", action.payload.id);
@@ -955,7 +966,9 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                   {requests.map((r) => (
                     <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px", border: `1px solid ${C.line}`, borderRadius: "9px" }}>
                       <div>
-                        <div style={{ fontSize: "14px", fontWeight: 500 }}>{r.message}</div>
+                        <div style={{ fontSize: "14px", fontWeight: 500 }}>
+                          {r.message}{r.quantity > 1 ? ` (× ${r.quantity})` : ""}
+                        </div>
                         <div style={{ fontSize: "12px", color: C.inkSoft, marginTop: "3px" }}>
                           {new Date(r.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
                         </div>
@@ -1057,6 +1070,9 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                     <div>
                       <div style={{ fontWeight: 500, marginBottom: "4px" }}>{c.name}</div>
                       <div style={{ fontSize: "13px", color: C.inkSoft }}>{c.phone}</div>
+                      {role === "owner" && c.idNumber && (
+                        <div style={{ fontSize: "12px", color: C.inkSoft, marginTop: "4px" }}>{c.idType || "ID"}: {c.idNumber}</div>
+                      )}
                     </div>
                     {role === "owner" && (
                       <button
@@ -1261,21 +1277,20 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       {showAddBooking && (
         <AddBookingModal
           clients={bClients}
-          services={bServices.filter((s) => s.category !== "Amenities")}
+          services={bServices.filter((s) => !GUEST_REQUEST_CATEGORIES.includes(s.category))}
           onClose={() => setShowAddBooking(false)}
           onAddClient={async (newClient) => {
-            const payload = { branch_id: branchId, name: newClient.name, phone: newClient.phone };
+            const id = newId();
+            const payload = { id, branch_id: branchId, name: newClient.name, phone: newClient.phone, id_type: newClient.idType || null, id_number: newClient.idNumber || null };
+            const client = mapClient(payload);
             try {
-              const { data, error } = await supabase.from("clients").insert(payload).select().single();
+              const { error } = await supabase.from("clients").insert(payload);
               if (error) throw error;
-              const client = mapClient(data);
               setClients((prev) => [...prev, client]);
               return client;
             } catch (e) {
-              const tempId = "temp-" + Date.now();
-              enqueueAction({ type: "addClient", payload, tempId });
+              enqueueAction({ type: "addClient", payload, tempId: id });
               setPendingCount(queueCount());
-              const client = { id: tempId, branchId, name: newClient.name, phone: newClient.phone };
               setClients((prev) => [...prev, client]);
               return client;
             }
@@ -1309,16 +1324,16 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         <AddClientModal
           onClose={() => setShowAddClient(false)}
           onSave={async (newClient) => {
-            const payload = { branch_id: branchId, name: newClient.name, phone: newClient.phone };
+            const id = newId();
+            const payload = { id, branch_id: branchId, name: newClient.name, phone: newClient.phone, id_type: newClient.idType || null, id_number: newClient.idNumber || null };
             try {
-              const { data, error } = await supabase.from("clients").insert(payload).select().single();
+              const { error } = await supabase.from("clients").insert(payload);
               if (error) throw error;
-              setClients((prev) => [...prev, mapClient(data)]);
+              setClients((prev) => [...prev, mapClient(payload)]);
             } catch (e) {
-              const tempId = "temp-" + Date.now();
-              enqueueAction({ type: "addClient", payload, tempId });
+              enqueueAction({ type: "addClient", payload, tempId: id });
               setPendingCount(queueCount());
-              setClients((prev) => [...prev, { id: tempId, branchId, name: newClient.name, phone: newClient.phone }]);
+              setClients((prev) => [...prev, mapClient(payload)]);
             }
             setShowAddClient(false);
           }}
@@ -1330,7 +1345,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         <EditBookingModal
           booking={editingBooking}
           clients={bClients}
-          services={bServices.filter((s) => s.category !== "Amenities")}
+          services={bServices.filter((s) => !GUEST_REQUEST_CATEGORIES.includes(s.category))}
           onClose={() => setEditingBooking(null)}
           onSave={(updates) => saveBookingEdit(editingBooking.id, updates)}
         />
@@ -1352,14 +1367,18 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   );
 }
 
+const ID_TYPE_OPTIONS = ["NIDA", "Voting ID", "Driving License", "Passport"];
+
 function AddClientModal({ onClose, onSave }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [idType, setIdType] = useState("");
+  const [idNumber, setIdNumber] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
     setSaving(true);
-    await onSave({ name: name.trim(), phone: phone.trim() || "—" });
+    await onSave({ name: name.trim(), phone: phone.trim() || "—", idType: idType || null, idNumber: idNumber.trim() || null });
     setSaving(false);
   }
 
@@ -1387,8 +1406,29 @@ function AddClientModal({ onClose, onSave }) {
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
           placeholder="e.g. +255 7XX XXX XXX"
-          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 18px", fontSize: "14px", boxSizing: "border-box" }}
+          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px", boxSizing: "border-box" }}
         />
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>ID type (optional)</label>
+        <select
+          value={idType}
+          onChange={(e) => setIdType(e.target.value)}
+          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px", boxSizing: "border-box" }}
+        >
+          <option value="">— Not recorded —</option>
+          {ID_TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>ID number</label>
+        <input
+          value={idNumber}
+          onChange={(e) => setIdNumber(e.target.value)}
+          placeholder="As shown on the ID"
+          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 6px", fontSize: "14px", boxSizing: "border-box" }}
+        />
+        <p style={{ fontSize: "11.5px", color: C.inkSoft, margin: "0 0 18px" }}>
+          Only the owner can view this after saving — staff can record it here but won't see it again in the Clients list.
+        </p>
 
         <button
           disabled={!name.trim() || saving}
@@ -1911,46 +1951,75 @@ function GuestApp({ onExit, initialCode }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(Boolean(startCode));
   const [error, setError] = useState("");
-  const [requestSent, setRequestSent] = useState(false);
-  const [requestSending, setRequestSending] = useState(false);
   const [airtimeAmount, setAirtimeAmount] = useState("");
   const [airtimeNetwork, setAirtimeNetwork] = useState("Vodacom");
   const [airtimePhone, setAirtimePhone] = useState("");
   const [airtimeSending, setAirtimeSending] = useState(false);
   const [airtimeSent, setAirtimeSent] = useState(false);
-  const [amenities, setAmenities] = useState([]);
-  const [amenitiesLoading, setAmenitiesLoading] = useState(false);
+  const [guestServices, setGuestServices] = useState([]);
+  const [guestServicesLoading, setGuestServicesLoading] = useState(false);
+  const [activeCategory, setActiveCategory] = useState(null);
+  const [quantities, setQuantities] = useState({});
   const [requestedIds, setRequestedIds] = useState([]);
   const [sendingId, setSendingId] = useState(null);
+  const [customMessage, setCustomMessage] = useState("");
+  const [customSending, setCustomSending] = useState(false);
+  const [customSent, setCustomSent] = useState(false);
 
   useEffect(() => {
     if (startCode) lookup(startCode, { silent: Boolean(!initialCode && savedCode) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const CATEGORY_ORDER = ["Kitchen", "Counter", "Amenities", "Laundry"];
+
   useEffect(() => {
     if (!session?.access?.branch_id) return;
-    setAmenitiesLoading(true);
+    setGuestServicesLoading(true);
     supabase
       .from("services")
       .select("*")
       .eq("branch_id", session.access.branch_id)
-      .eq("category", "Amenities")
+      .in("category", GUEST_REQUEST_CATEGORIES)
       .then(({ data }) => {
-        if (data) setAmenities(data);
-        setAmenitiesLoading(false);
+        if (data) {
+          setGuestServices(data);
+          const firstCategory = CATEGORY_ORDER.find((cat) => data.some((s) => s.category === cat));
+          setActiveCategory(firstCategory || null);
+        }
+        setGuestServicesLoading(false);
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
-  async function requestAmenity(item) {
+  async function requestItem(item) {
     setSendingId(item.id);
+    const qty = item.category === "Kitchen" ? (quantities[item.id] || 1) : 1;
+    const qtyLabel = qty > 1 ? ` × ${qty}` : "";
+    const pickupNote = item.category === "Counter" ? " — pickup at counter" : "";
+    const priceLabel = item.price > 0 ? `TSh ${Number(item.price).toLocaleString()}` : "Free";
     await supabase.from("service_requests").insert({
       code: session.access.code,
       guest_name: session.access.guest_name,
-      message: `${session.access.guest_name} requested ${item.name} (TSh ${Number(item.price).toLocaleString()})`,
+      quantity: qty,
+      message: `${session.access.guest_name} requested ${item.name}${qtyLabel}${pickupNote} (${priceLabel})`,
     });
     setSendingId(null);
     setRequestedIds((prev) => [...prev, item.id]);
+  }
+
+  async function sendCustomMessage() {
+    if (!customMessage.trim()) return;
+    setCustomSending(true);
+    await supabase.from("service_requests").insert({
+      code: session.access.code,
+      guest_name: session.access.guest_name,
+      message: customMessage.trim(),
+    });
+    setCustomSending(false);
+    setCustomSent(true);
+    setCustomMessage("");
+    setTimeout(() => setCustomSent(false), 2500);
   }
 
   async function lookup(rawCode, opts = {}) {
@@ -2074,35 +2143,68 @@ function GuestApp({ onExit, initialCode }) {
 
         <div style={{ height: "14px" }} />
 
-        {amenities.length > 0 && (
+        {guestServices.length > 0 && (
           <>
-            <Panel title="Amenities">
+            <Panel title="Order & requests">
+              <div style={{ display: "flex", gap: "6px", marginBottom: "14px", flexWrap: "wrap" }}>
+                {CATEGORY_ORDER.filter((cat) => guestServices.some((s) => s.category === cat)).map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setActiveCategory(cat)}
+                    style={{
+                      fontSize: "12.5px", fontWeight: 500, border: `1px solid ${C.line}`, borderRadius: "999px",
+                      padding: "6px 13px", cursor: "pointer",
+                      background: activeCategory === cat ? C.ink : "none",
+                      color: activeCategory === cat ? "#fff" : C.inkSoft,
+                    }}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
               <p style={{ fontSize: "13px", color: C.inkSoft, marginTop: 0, marginBottom: "14px" }}>
-                Tap to request any item — the front desk will bring it to you.
+                {activeCategory === "Kitchen" && "Pick a quantity and send your order to the kitchen."}
+                {activeCategory === "Counter" && "Requested items are ready for pickup at the counter."}
+                {activeCategory === "Amenities" && "Tap to request any item — the front desk will bring it to you."}
+                {activeCategory === "Laundry" && "Ironing is complimentary for guests — just ask."}
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                {amenities.map((item) => {
+                {guestServices.filter((item) => item.category === activeCategory).map((item) => {
                   const requested = requestedIds.includes(item.id);
+                  const isKitchen = item.category === "Kitchen";
+                  const qty = quantities[item.id] || 1;
                   return (
-                    <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
+                    <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${C.line}`, gap: "10px" }}>
                       <div>
                         <div style={{ fontSize: "13.5px", fontWeight: 500 }}>{item.name}</div>
-                        <div style={{ fontSize: "12px", color: C.inkSoft }}>TSh {Number(item.price).toLocaleString()}</div>
+                        <div style={{ fontSize: "12px", color: C.inkSoft }}>{item.price > 0 ? `TSh ${Number(item.price).toLocaleString()}` : "Free"}</div>
                       </div>
                       {requested ? (
-                        <span style={{ fontSize: "12.5px", color: "#1E6E67", fontWeight: 500 }}>Requested</span>
+                        <span style={{ fontSize: "12.5px", color: "#1E6E67", fontWeight: 500, whiteSpace: "nowrap" }}>Requested</span>
                       ) : (
-                        <button
-                          disabled={isExpired || sendingId === item.id}
-                          onClick={() => requestAmenity(item)}
-                          style={{
-                            fontSize: "12.5px", border: "none", borderRadius: "6px", padding: "6px 12px",
-                            background: isExpired ? C.line : C.clay, color: isExpired ? C.inkSoft : "#fff",
-                            cursor: isExpired ? "default" : "pointer", opacity: sendingId === item.id ? 0.7 : 1
-                          }}
-                        >
-                          {sendingId === item.id ? "Sending…" : "Request"}
-                        </button>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          {isKitchen && (
+                            <input
+                              type="number"
+                              min="1"
+                              value={qty}
+                              onChange={(e) => setQuantities((prev) => ({ ...prev, [item.id]: Math.max(1, Number(e.target.value) || 1) }))}
+                              disabled={isExpired}
+                              style={{ width: "48px", padding: "6px", borderRadius: "6px", border: `1px solid ${C.line}`, fontSize: "12.5px", textAlign: "center" }}
+                            />
+                          )}
+                          <button
+                            disabled={isExpired || sendingId === item.id}
+                            onClick={() => requestItem(item)}
+                            style={{
+                              fontSize: "12.5px", border: "none", borderRadius: "6px", padding: "6px 12px", whiteSpace: "nowrap",
+                              background: isExpired ? C.line : C.clay, color: isExpired ? C.inkSoft : "#fff",
+                              cursor: isExpired ? "default" : "pointer", opacity: sendingId === item.id ? 0.7 : 1
+                            }}
+                          >
+                            {sendingId === item.id ? "Sending…" : "Request"}
+                          </button>
+                        </div>
                       )}
                     </div>
                   );
@@ -2177,30 +2279,33 @@ function GuestApp({ onExit, initialCode }) {
             )}
           </div>
 
-          {requestSent ? (
-            <p style={{ fontSize: "13.5px", color: "#1E6E67", margin: 0 }}>Request sent — the front desk has been notified.</p>
-          ) : (
-            <button
-              disabled={isExpired || requestSending}
-              onClick={async () => {
-                setRequestSending(true);
-                await supabase.from("service_requests").insert({
-                  code: access.code,
-                  guest_name: access.guest_name,
-                  message: `${access.guest_name} requested assistance (room: ${access.service_names})`,
-                });
-                setRequestSending(false);
-                setRequestSent(true);
-              }}
-              style={{
-                width: "100%", padding: "10px", borderRadius: "8px", border: "none",
-                background: isExpired ? C.line : C.signal, color: isExpired ? C.inkSoft : "#fff",
-                fontSize: "14px", cursor: isExpired ? "default" : "pointer", opacity: requestSending ? 0.7 : 1
-              }}
-            >
-              {requestSending ? "Sending…" : "Request a service"}
-            </button>
-          )}
+          <div>
+            <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px", color: C.ink }}>Message the front desk</p>
+            <textarea
+              value={customMessage}
+              onChange={(e) => setCustomMessage(e.target.value)}
+              placeholder="Type anything you need — this goes straight to the front desk."
+              disabled={isExpired || customSending}
+              rows={3}
+              style={{ width: "100%", padding: "9px 10px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13.5px", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px" }}>
+              {customSent ? (
+                <span style={{ fontSize: "12.5px", color: "#1E6E67" }}>Sent — the front desk has been notified.</span>
+              ) : <span />}
+              <button
+                disabled={isExpired || customSending || !customMessage.trim()}
+                onClick={sendCustomMessage}
+                style={{
+                  padding: "9px 16px", borderRadius: "7px", border: "none", fontSize: "13.5px",
+                  background: isExpired || !customMessage.trim() ? C.line : C.signal, color: isExpired || !customMessage.trim() ? C.inkSoft : "#fff",
+                  cursor: isExpired || !customMessage.trim() ? "default" : "pointer", opacity: customSending ? 0.7 : 1
+                }}
+              >
+                {customSending ? "Sending…" : "Send"}
+              </button>
+            </div>
+          </div>
         </Panel>
 
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: "18px" }}>
