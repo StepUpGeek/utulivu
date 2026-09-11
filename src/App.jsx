@@ -131,6 +131,24 @@ function rateForRoom(room, roomRates) {
   return match ? match.nightlyRate : 0;
 }
 
+// The single source of truth for what a booking should cost: room rate ×
+// nights, plus any selected add-on services. Used wherever an invoice amount
+// needs computing — at creation, when a still-pending/unpaid booking is
+// edited, and as a fallback if a booking somehow reaches "confirmed" without
+// an invoice yet (e.g. it was created while offline).
+function computeInvoiceAmount(booking, roomsList, roomRatesList, servicesList) {
+  const nights = nightsBetween(booking.checkIn, booking.checkOut);
+  const room = roomsList.find((r) => r.id === booking.roomId);
+  const accommodationAmount = rateForRoom(room, roomRatesList) * nights;
+  const servicesAmount = (booking.serviceIds || []).reduce((sum, sid) => {
+    const svc = servicesList.find((s) => s.id === sid);
+    if (!svc) return sum;
+    const qty = svc.billingUnit === "per_night" ? nights : 1;
+    return sum + svc.price * qty;
+  }, 0);
+  return accommodationAmount + servicesAmount;
+}
+
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== "undefined" ? window.matchMedia("(max-width: 780px)").matches : false
@@ -525,6 +543,9 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         } else if (action.type === "updateInvoiceStatus") {
           const { error } = await supabase.from("invoices").update({ status: action.payload.status }).eq("id", action.payload.id);
           if (error) throw error;
+        } else if (action.type === "updateInvoiceAmount") {
+          const { error } = await supabase.from("invoices").update({ amount: action.payload.amount }).eq("id", action.payload.id);
+          if (error) throw error;
         } else if (action.type === "editBooking") {
           const { error } = await supabase.from("bookings").update(action.payload.updates).eq("id", action.payload.id);
           if (error) throw error;
@@ -617,11 +638,26 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       })
       .subscribe();
 
+    // Invoices can now change from outside this browser tab's own actions —
+    // most notably the database trigger that voids an invoice automatically
+    // when its booking is cancelled (by either role). This keeps the Bookings
+    // and Finance tabs current without needing a manual refresh.
+    const invoicesChannel = supabase
+      .channel("invoices_live")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "invoices" }, (payload) => {
+        setInvoices((prev) => (prev.some((v) => v.id === payload.new.id) ? prev : [...prev, mapInvoice(payload.new)]));
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "invoices" }, (payload) => {
+        setInvoices((prev) => prev.map((v) => (v.id === payload.new.id ? mapInvoice(payload.new) : v)));
+      })
+      .subscribe();
+
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
       supabase.removeChannel(requestsChannel);
       supabase.removeChannel(bookingsChannel);
+      supabase.removeChannel(invoicesChannel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
@@ -681,6 +717,18 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     if (!clientActivity[bk.clientId] || score > clientActivity[bk.clientId]) clientActivity[bk.clientId] = score;
   });
   const sortedClients = [...bClients].sort((a, b) => (clientActivity[b.id] ?? -1) - (clientActivity[a.id] ?? -1));
+
+  // Same idea for the Bookings tab itself — active bookings (pending/confirmed)
+  // on top, most recent check-in first, so real current activity isn't buried
+  // under old completed/cancelled or historical test bookings.
+  const sortedBookings = [...bBookings].sort((a, b) => {
+    const rankA = STATUS_RANK[a.status] || 0;
+    const rankB = STATUS_RANK[b.status] || 0;
+    if (rankA !== rankB) return rankB - rankA;
+    const dateA = a.checkIn && a.checkIn !== "TBC" ? new Date(a.checkIn).getTime() : 0;
+    const dateB = b.checkIn && b.checkIn !== "TBC" ? new Date(b.checkIn).getTime() : 0;
+    return dateB - dateA;
+  });
 
   const clientName = (id) => clients.find((c) => c.id === id)?.name || "—";
   const serviceNames = (ids) => ids.map((id) => services.find((s) => s.id === id)?.name).join(", ");
@@ -749,24 +797,19 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       setPendingCount(queueCount());
     }
 
-    // Confirming a booking issues its invoice, if it doesn't have one yet.
-    // Cancelling voids whatever invoice exists. Completing leaves the invoice
-    // as-is — Finance flags it if it's still unpaid after checkout, rather
-    // than silently marking it paid.
+    // Under the old flow, an invoice only existed once a booking was
+    // confirmed. Now invoices are created the moment a booking is made (see
+    // the AddBookingModal onSave below), so this is just a safety net for
+    // anything that somehow reached "confirmed" without one — e.g. a booking
+    // that was created while offline. Cancellation no longer voids the
+    // invoice here: that now happens via a database trigger on bookings, so
+    // it fires consistently regardless of who cancels it (owner or staff),
+    // without needing a special permission carve-out on invoices.
     if (!bk) return;
     const existingInvoice = invoices.find((v) => v.bookingId === id);
 
     if (status === "confirmed" && !existingInvoice) {
-      const nights = nightsBetween(bk.checkIn, bk.checkOut);
-      const room = rooms.find((r) => r.id === bk.roomId);
-      const accommodationAmount = rateForRoom(room, roomRates) * nights;
-      const servicesAmount = bk.serviceIds.reduce((sum, sid) => {
-        const svc = services.find((s) => s.id === sid);
-        if (!svc) return sum;
-        const qty = svc.billingUnit === "per_night" ? nights : 1;
-        return sum + svc.price * qty;
-      }, 0);
-      const amount = accommodationAmount + servicesAmount;
+      const amount = computeInvoiceAmount(bk, rooms, roomRates, services);
       const payload = { branch_id: branchId, booking_id: id, amount, status: "outstanding" };
       try {
         const { data, error } = await supabase.from("invoices").insert(payload).select().single();
@@ -777,8 +820,6 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         setPendingCount(queueCount());
         setInvoices((prev) => [...prev, { id: "temp-" + Date.now(), branchId, bookingId: id, amount, status: "outstanding" }]);
       }
-    } else if (status === "cancelled" && existingInvoice && existingInvoice.status !== "void" && role === "owner") {
-      await updateInvoiceStatus(existingInvoice.id, "void");
     }
   }
 
@@ -796,7 +837,11 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   }
 
   async function updateInvoiceStatus(id, status) {
-    if (role !== "owner") return; // staff can't change invoice status — enforced server-side too
+    // Staff handle payment at the counter, so they can close out an invoice as
+    // paid without needing the owner — but only the owner can void one or move
+    // it back to outstanding, since that's the direction that erases money owed.
+    // (This must also be allowed server-side — see the accompanying SQL note.)
+    if (role !== "owner" && status !== "paid") return;
     setInvoices((prev) => prev.map((v) => (v.id === id ? { ...v, status } : v)));
     try {
       const { error } = await supabase.from("invoices").update({ status }).eq("id", id);
@@ -805,6 +850,30 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       enqueueAction({ type: "updateInvoiceStatus", payload: { id, status } });
       setPendingCount(queueCount());
     }
+  }
+
+  // Shared invoice control used on both the Bookings and Finance tabs so
+  // marking a payment works the same wherever staff happen to be. The owner
+  // gets the full picker (paid/outstanding/void); staff get a status pill plus
+  // a one-tap "Mark paid" button that only appears while it's outstanding.
+  function invoiceControl(invoice) {
+    if (!invoice) return <span style={{ fontSize: "12.5px", color: C.inkSoft }}>—</span>;
+    if (role === "owner") {
+      return <InvoiceStatusPicker value={invoice.status} onChange={(s) => updateInvoiceStatus(invoice.id, s)} />;
+    }
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        <Pill tone={invoice.status}>{invoice.status}</Pill>
+        {invoice.status === "outstanding" && (
+          <button
+            onClick={() => updateInvoiceStatus(invoice.id, "paid")}
+            style={{ fontSize: "12px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "4px 10px", cursor: "pointer" }}
+          >
+            Mark paid
+          </button>
+        )}
+      </div>
+    );
   }
 
   async function saveBookingEdit(id, updates) {
@@ -832,6 +901,26 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       enqueueAction({ type: "editBooking", payload: { id, updates: dbUpdates } });
       setPendingCount(queueCount());
     }
+
+    // Keep the invoice amount live while nothing's final yet — the moment a
+    // booking is confirmed or its invoice moves off "outstanding" (paid, or
+    // voided by cancellation), this stops touching it.
+    const bk = bookings.find((b) => b.id === id);
+    const inv = invoices.find((v) => v.bookingId === id);
+    if (bk && bk.status === "pending" && inv && inv.status === "outstanding") {
+      const newAmount = computeInvoiceAmount(updates, rooms, roomRates, services);
+      if (newAmount !== inv.amount) {
+        setInvoices((prev) => prev.map((v) => (v.id === inv.id ? { ...v, amount: newAmount } : v)));
+        try {
+          const { error: invError } = await supabase.from("invoices").update({ amount: newAmount }).eq("id", inv.id);
+          if (invError) throw invError;
+        } catch (e2) {
+          enqueueAction({ type: "updateInvoiceAmount", payload: { id: inv.id, amount: newAmount } });
+          setPendingCount(queueCount());
+        }
+      }
+    }
+
     setEditingBooking(null);
   }
 
@@ -1143,18 +1232,22 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                     <th>Services</th>
                     <th>Dates</th>
                     <th>Status</th>
+                    <th>Payment</th>
                     <th>Guest access</th>
                     {role === "owner" && <th></th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {bBookings.map((bk) => (
+                  {sortedBookings.map((bk) => {
+                    const inv = invoices.find((v) => v.bookingId === bk.id);
+                    return (
                     <tr key={bk.id} style={{ borderTop: `1px solid ${C.line}` }}>
                       <td style={{ padding: "10px 0" }}>{clientName(bk.clientId)}</td>
                       <td>{roomLabel(bk)}</td>
                       <td>{serviceNames(bk.serviceIds)}</td>
                       <td>{bk.checkIn} → {bk.checkOut}</td>
                       <td><StatusPicker value={bk.status} onChange={(s) => updateBookingStatus(bk.id, s)} /></td>
+                      <td>{invoiceControl(inv)}</td>
                       <td>
                         <button
                           onClick={() => generateGuestCode(bk)}
@@ -1183,7 +1276,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                         </td>
                       )}
                     </tr>
-                  ))}
+                  );})}
                 </tbody>
               </table>
               </div>
@@ -1363,11 +1456,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                           <td style={{ padding: "10px 0" }}>{bk ? clientName(bk.clientId) : "—"}</td>
                           <td>{money(v.amount)}</td>
                           <td>
-                            {role === "owner" ? (
-                              <InvoiceStatusPicker value={v.status} onChange={(s) => updateInvoiceStatus(v.id, s)} />
-                            ) : (
-                              <Pill tone={v.status}>{v.status}</Pill>
-                            )}
+                            {invoiceControl(v)}
                             {unpaidAfterCheckout && (
                               <div style={{ fontSize: "11.5px", color: C.red, marginTop: "4px" }}>Guest checked out — still unpaid</div>
                             )}
@@ -1482,7 +1571,26 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
             try {
               const { data, error } = await supabase.from("bookings").insert(payload).select().single();
               if (error) throw error;
-              setBookings((prev) => [...prev, mapBooking(data)]);
+              const created = mapBooking(data);
+              setBookings((prev) => [...prev, created]);
+
+              // Invoice exists from creation now, not just from confirmation —
+              // a walk-in who pays cash immediately has something to mark paid
+              // right away, without staff needing to confirm the booking first.
+              // (If this insert fails while the booking succeeded, it'll still
+              // get created as a fallback the moment the booking is confirmed —
+              // see updateBookingStatus.)
+              const amount = computeInvoiceAmount(created, rooms, roomRates, services);
+              const invoicePayload = { branch_id: branchId, booking_id: created.id, amount, status: "outstanding" };
+              try {
+                const { data: invData, error: invError } = await supabase.from("invoices").insert(invoicePayload).select().single();
+                if (invError) throw invError;
+                setInvoices((prev) => [...prev, mapInvoice(invData)]);
+              } catch (invE) {
+                enqueueAction({ type: "addInvoice", payload: invoicePayload });
+                setPendingCount(queueCount());
+                setInvoices((prev) => [...prev, { id: "temp-" + Date.now(), branchId, bookingId: created.id, amount, status: "outstanding" }]);
+              }
             } catch (e) {
               if (e?.message?.includes("already booked")) {
                 alert("That room is already booked for the selected dates. Please choose a different room or date range.");
@@ -1491,6 +1599,9 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
               enqueueAction({ type: "addBooking", payload });
               setPendingCount(queueCount());
               setBookings((prev) => [...prev, { id: "temp-" + Date.now(), branchId, clientId: newBooking.clientId, roomId: newBooking.roomId, serviceIds: newBooking.serviceIds, checkIn: newBooking.checkIn, checkOut: newBooking.checkOut, status: newBooking.status }]);
+              // Created while offline: no real booking id to attach an invoice to
+              // yet, so this one gets its invoice at confirm-time instead (the
+              // same fallback mentioned above).
             }
             setShowAddBooking(false);
             return true;
@@ -1604,11 +1715,8 @@ function AddClientModal({ onClose, onSave }) {
           value={idNumber}
           onChange={(e) => setIdNumber(e.target.value)}
           placeholder="As shown on the ID"
-          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 6px", fontSize: "14px", boxSizing: "border-box" }}
+          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 18px", fontSize: "14px", boxSizing: "border-box" }}
         />
-        <p style={{ fontSize: "11.5px", color: C.inkSoft, margin: "0 0 18px" }}>
-          Only the owner can view this after saving — staff can record it here but won't see it again in the Clients list.
-        </p>
 
         <button
           disabled={!name.trim() || saving}
@@ -1890,9 +1998,6 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
             <span style={{ fontSize: "12.5px", color: C.inkSoft }}>No transport options set up yet.</span>
           )}
         </div>
-        <p style={{ fontSize: "11px", color: C.inkSoft, margin: "-8px 0 14px" }}>
-          Room cost is calculated automatically from the room picked above. Food, drinks, and laundry are ordered by the guest after check-in, from the Guest portal.
-        </p>
 
         <div style={{ display: "flex", gap: "10px", marginBottom: checkIn && checkOut && checkIn === checkOut ? "6px" : "18px" }}>
           <div style={{ flex: 1 }}>
