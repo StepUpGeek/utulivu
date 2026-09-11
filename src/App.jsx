@@ -464,7 +464,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         supabase.from("rooms").select("*"),
         supabase.from("room_rates").select("*"),
       ]);
-      if (b.error) throw b.error;
+      const firstError = [b, c, s, bk, inv, iq, t, rm, rr].find((r) => r.error)?.error;
+      if (firstError) throw firstError;
       applyFetchedData(b.data, c.data, s.data, bk.data, inv.data, iq.data, t.data, rm.data, rr.data);
       setIsOnline(true);
     } catch (e) {
@@ -667,6 +668,19 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const bTags = inBranch(tags);
   const bInvoices = inBranch(invoices);
   const bRooms = inBranch(rooms);
+
+  // Clients with an active (pending/confirmed) booking float to the top,
+  // ranked by their most recent check-in; then completed, then cancelled,
+  // then clients with no bookings at all sink to the bottom.
+  const STATUS_RANK = { confirmed: 3, pending: 3, completed: 2, cancelled: 1 };
+  const clientActivity = {};
+  bBookings.forEach((bk) => {
+    const rank = STATUS_RANK[bk.status] || 0;
+    const dateVal = bk.checkIn && bk.checkIn !== "TBC" ? new Date(bk.checkIn).getTime() : 0;
+    const score = rank * 1e15 + dateVal;
+    if (!clientActivity[bk.clientId] || score > clientActivity[bk.clientId]) clientActivity[bk.clientId] = score;
+  });
+  const sortedClients = [...bClients].sort((a, b) => (clientActivity[b.id] ?? -1) - (clientActivity[a.id] ?? -1));
 
   const clientName = (id) => clients.find((c) => c.id === id)?.name || "—";
   const serviceNames = (ids) => ids.map((id) => services.find((s) => s.id === id)?.name).join(", ");
@@ -1186,7 +1200,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
               }
             >
               <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: "14px" }}>
-                {bClients.map((c) => (
+                {sortedClients.map((c) => (
                   <div key={c.id} style={{ border: `1px solid ${C.line}`, borderRadius: "9px", padding: "14px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div>
                       <div style={{ fontWeight: 500, marginBottom: "4px" }}>{c.name}</div>
@@ -1668,7 +1682,7 @@ function EditBookingModal({ booking, clients, services, rooms, roomRates, existi
           <div style={{ marginBottom: "14px" }} />
         )}
 
-        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Additional services (e.g. transport)</label>
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Will they need transport?</label>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px", margin: "6px 0 14px" }}>
           {services.map((s) => (
             <label key={s.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13.5px" }}>
@@ -1678,7 +1692,7 @@ function EditBookingModal({ booking, clients, services, rooms, roomRates, existi
           ))}
         </div>
 
-        <div style={{ display: "flex", gap: "10px", marginBottom: "18px" }}>
+        <div style={{ display: "flex", gap: "10px", marginBottom: checkIn && checkOut && checkIn === checkOut ? "6px" : "18px" }}>
           <div style={{ flex: 1 }}>
             <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-in</label>
             <input type="date" value={checkIn} onChange={(e) => setCheckIn(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
@@ -1688,6 +1702,11 @@ function EditBookingModal({ booking, clients, services, rooms, roomRates, existi
             <input type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
           </div>
         </div>
+        {checkIn && checkOut && checkIn === checkOut && (
+          <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 6px" }}>
+            Same-day check-in/check-out leaves the room vacant that night, so it won't block another booking.
+          </p>
+        )}
 
         <p style={{ fontSize: "11.5px", color: C.inkSoft, margin: "0 0 12px" }}>
           Note: this updates the booking's details only. If the booking already has an invoice, its amount won't change automatically — adjust it in Finance if needed.
@@ -1859,7 +1878,7 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
         )}
         {!selectedRoom && <div style={{ marginBottom: "14px" }} />}
 
-        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Additional services (e.g. transport)</label>
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Will they need transport?</label>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px", margin: "6px 0 14px" }}>
           {services.map((s) => (
             <label key={s.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13.5px" }}>
@@ -1868,14 +1887,14 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
             </label>
           ))}
           {services.length === 0 && (
-            <span style={{ fontSize: "12.5px", color: C.inkSoft }}>No add-on services set up yet.</span>
+            <span style={{ fontSize: "12.5px", color: C.inkSoft }}>No transport options set up yet.</span>
           )}
         </div>
         <p style={{ fontSize: "11px", color: C.inkSoft, margin: "-8px 0 14px" }}>
           Room cost is calculated automatically from the room picked above. Food, drinks, and laundry are ordered by the guest after check-in, from the Guest portal.
         </p>
 
-        <div style={{ display: "flex", gap: "10px", marginBottom: "18px" }}>
+        <div style={{ display: "flex", gap: "10px", marginBottom: checkIn && checkOut && checkIn === checkOut ? "6px" : "18px" }}>
           <div style={{ flex: 1 }}>
             <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-in</label>
             <input type="date" value={checkIn} onChange={(e) => setCheckIn(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
@@ -1885,9 +1904,11 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
             <input type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
           </div>
         </div>
-        <p style={{ fontSize: "11px", color: C.inkSoft, margin: "-12px 0 14px" }}>
-          A same-day check-in/check-out leaves the room vacant that night, so it won't block another booking.
-        </p>
+        {checkIn && checkOut && checkIn === checkOut && (
+          <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 18px" }}>
+            Same-day check-in/check-out leaves the room vacant that night, so it won't block another booking.
+          </p>
+        )}
 
         <button
           disabled={!canSave || saving}
