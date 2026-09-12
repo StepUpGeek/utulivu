@@ -49,8 +49,9 @@ const FONTS = (
 const mapBranch = (r) => ({ id: r.id, name: r.name, location: r.location });
 const mapClient = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, phone: r.phone, idType: r.id_type || null, idNumber: r.id_number || null });
 const mapService = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, price: r.price, category: r.category, billingUnit: r.billing_unit || "flat" });
-const mapBooking = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, serviceIds: r.service_ids || [], checkIn: r.check_in, checkOut: r.check_out, status: r.status, roomNumber: r.room_number || "", roomId: r.room_id || null });
-const mapInvoice = (r) => ({ id: r.id, branchId: r.branch_id, bookingId: r.booking_id, amount: r.amount, status: r.status });
+const mapBooking = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, serviceIds: r.service_ids || [], checkIn: r.check_in, checkOut: r.check_out, checkInTime: r.check_in_time || null, checkOutTime: r.check_out_time || null, status: r.status, roomNumber: r.room_number || "", roomId: r.room_id || null });
+const mapInvoice = (r) => ({ id: r.id, branchId: r.branch_id, bookingId: r.booking_id, amount: r.amount, status: r.status, paidAt: r.paid_at || null });
+const mapExpense = (r) => ({ id: r.id, branchId: r.branch_id, description: r.description, amount: Number(r.amount) || 0, createdAt: r.created_at });
 const mapInquiry = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, message: r.message, status: r.status });
 const mapTag = (r) => ({ id: r.id, branchId: r.branch_id, label: r.label, type: r.type, linkedName: r.linked_name, lastScan: r.last_scan });
 const mapRoom = (r) => ({ id: r.id, branchId: r.branch_id, roomNumber: r.room_number, roomType: r.room_type });
@@ -151,12 +152,29 @@ const FAILED_ACTION_LABELS = {
   editBooking: "Editing a booking",
   deleteBooking: "Deleting a booking",
   deleteClient: "Deleting a client",
+  addExpense: "Adding an expense",
 };
 
 function rateForRoom(room, roomRates) {
   if (!room) return 0;
   const match = roomRates.find((rr) => rr.branchId === room.branchId && rr.roomType === room.roomType);
   return match ? match.nightlyRate : 0;
+}
+
+// Today's date as "YYYY-MM-DD", matching how check_in/check_out are stored.
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+// A booking counts as occupying its room on a given date if that date falls
+// within its stay AND it hasn't been marked completed yet — completed means
+// "no longer active" regardless of what the original checkout date says
+// (an early checkout is completed today even if it was booked through next
+// week), so this naturally excludes rooms that were vacated ahead of plan.
+function isBookingActiveOn(booking, dateStr) {
+  if (!booking || booking.status === "completed") return false;
+  if (!booking.checkIn || !booking.checkOut || booking.checkIn === "TBC" || booking.checkOut === "TBC") return false;
+  return booking.checkIn <= dateStr && dateStr <= booking.checkOut;
 }
 
 // The single source of truth for what a booking should cost: room rate ×
@@ -434,6 +452,127 @@ function Login({ onSignIn, onBack }) {
 }
 
 /* ---------------------------------------------------------
+   Dashboard widgets — room-by-room occupancy for today, and the
+   expenses ledger. Both are role-aware: staff get today's actionable
+   state, manager/owner additionally get historical context.
+--------------------------------------------------------- */
+function RoomGrid({ rooms, bookings, clientName, canManage }) {
+  const today = todayStr();
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+      {rooms.map((room) => {
+        const todaysBookings = bookings.filter((b) => b.roomId === room.id && isBookingActiveOn(b, today));
+        const occupied = todaysBookings.length > 0;
+        const allTimeCount = bookings.filter((b) => b.roomId === room.id).length;
+        return (
+          <div key={room.id} style={{
+            display: "flex", alignItems: "center", gap: "12px", padding: "10px 12px",
+            border: `1px solid ${C.line}`, borderRadius: "8px",
+            background: occupied ? C.signalSoft : C.paperRaised
+          }}>
+            <div style={{ width: "88px", flexShrink: 0 }}>
+              <div style={{ fontWeight: 500, fontSize: "13.5px" }}>{room.roomNumber}</div>
+              <div style={{ fontSize: "11.5px", color: C.inkSoft }}>{room.roomType}</div>
+            </div>
+            <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: "6px" }}>
+              {occupied ? todaysBookings.map((b) => (
+                <span key={b.id} style={{ fontSize: "11.5px", background: "#fff", border: `1px solid ${C.line}`, borderRadius: "6px", padding: "3px 8px" }}>
+                  {clientName(b.clientId)} · {b.checkInTime || "--:--"}–{b.checkOutTime || "--:--"}
+                </span>
+              )) : (
+                <span style={{ fontSize: "12px", color: C.inkSoft }}>Vacant</span>
+              )}
+            </div>
+            {canManage && (
+              <div style={{ fontSize: "11px", color: C.inkSoft, flexShrink: 0, whiteSpace: "nowrap" }}>Booked {allTimeCount}×</div>
+            )}
+          </div>
+        );
+      })}
+      {rooms.length === 0 && (
+        <div style={{ fontSize: "13px", color: C.inkSoft }}>No rooms set up for this branch yet.</div>
+      )}
+    </div>
+  );
+}
+
+function ExpensesPanel({ expenses, canManage, showAll, onToggleShowAll, onAdd }) {
+  const [desc, setDesc] = useState("");
+  const [amount, setAmount] = useState("");
+  const [adding, setAdding] = useState(false);
+  const today = todayStr();
+  const scoped = canManage && showAll ? expenses : expenses.filter((e) => e.createdAt && e.createdAt.slice(0, 10) === today);
+  const total = scoped.reduce((sum, e) => sum + e.amount, 0);
+  const isHistorical = canManage && showAll;
+
+  async function handleAdd() {
+    if (!desc.trim() || !amount || Number(amount) <= 0) return;
+    setAdding(true);
+    await onAdd(desc.trim(), Number(amount));
+    setDesc("");
+    setAmount("");
+    setAdding(false);
+  }
+
+  return (
+    <Panel
+      title="Expenses"
+      action={canManage && (
+        <button
+          onClick={onToggleShowAll}
+          style={{ fontSize: "12.5px", border: `1px solid ${C.line}`, background: "none", borderRadius: "6px", padding: "6px 12px", cursor: "pointer", color: C.clayDeep }}
+        >
+          {showAll ? "Show today only" : "View all"}
+        </button>
+      )}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+        <span style={{ fontSize: "13px", color: C.inkSoft }}>{isHistorical ? "Total" : "Today's total"}</span>
+        <span className="fr" style={{ fontSize: "20px", fontWeight: 500 }}>{money(total)}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "14px", maxHeight: "220px", overflowY: "auto" }}>
+        {scoped.length === 0 && (
+          <span style={{ fontSize: "12.5px", color: C.inkSoft }}>No expenses recorded {isHistorical ? "" : "today "}yet.</span>
+        )}
+        {scoped.slice().reverse().map((e) => (
+          <div key={e.id} style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", padding: "6px 0", borderBottom: `1px solid ${C.line}` }}>
+            <span>{e.description}</span>
+            <span style={{ color: C.inkSoft }}>{money(e.amount)}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: "8px" }}>
+        <input
+          value={desc}
+          onChange={(ev) => setDesc(ev.target.value)}
+          placeholder="What for?"
+          style={{ flex: 2, padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13px", boxSizing: "border-box" }}
+        />
+        <input
+          type="number"
+          min="0"
+          value={amount}
+          onChange={(ev) => setAmount(ev.target.value)}
+          placeholder="Amount"
+          style={{ flex: 1, padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13px", boxSizing: "border-box" }}
+        />
+        <button
+          disabled={adding || !desc.trim() || !amount || Number(amount) <= 0}
+          onClick={handleAdd}
+          style={{
+            padding: "8px 14px", borderRadius: "7px", border: "none", fontSize: "13px", whiteSpace: "nowrap",
+            background: desc.trim() && amount ? C.clay : C.line, color: desc.trim() && amount ? "#fff" : C.inkSoft,
+            cursor: desc.trim() && amount ? "pointer" : "default"
+          }}
+        >
+          {adding ? "Adding…" : "Add"}
+        </button>
+      </div>
+    </Panel>
+  );
+}
+
+/* ---------------------------------------------------------
    Main app
 --------------------------------------------------------- */
 function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
@@ -451,6 +590,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [invoices, setInvoices] = useState([]);
   const [rooms, setRooms] = useState([]);
   const [roomRates, setRoomRates] = useState([]);
+  const [expenses, setExpenses] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
 
   const [showBranchMenu, setShowBranchMenu] = useState(false);
@@ -467,6 +607,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [generatingId, setGeneratingId] = useState(null);
   const [requests, setRequests] = useState([]);
   const [showAllRequests, setShowAllRequests] = useState(false);
+  const [showAllExpenses, setShowAllExpenses] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [usingCache, setUsingCache] = useState(false);
   const [pendingCount, setPendingCount] = useState(queueCount());
@@ -474,7 +615,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [syncFailures, setSyncFailures] = useState([]);
   const [showSyncFailures, setShowSyncFailures] = useState(false);
 
-  function applyFetchedData(b, c, s, bk, inv, iq, t, rm, rr) {
+  function applyFetchedData(b, c, s, bk, inv, iq, t, rm, rr, ex) {
     const mapped = {
       branches: b ? b.map(mapBranch) : [],
       clients: c ? c.map(mapClient) : [],
@@ -485,6 +626,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       tags: t ? t.map(mapTag) : [],
       rooms: rm ? rm.map(mapRoom) : [],
       roomRates: rr ? rr.map(mapRoomRate) : [],
+      expenses: ex ? ex.map(mapExpense) : [],
     };
     setBranches(mapped.branches);
     setClients(mapped.clients);
@@ -495,6 +637,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     setTags(mapped.tags);
     setRooms(mapped.rooms);
     setRoomRates(mapped.roomRates);
+    setExpenses(mapped.expenses);
     setBranchId((prev) => prev || mapped.branches[0]?.id || null);
     saveCache(mapped);
     setUsingCache(false);
@@ -502,7 +645,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
   async function fetchAll() {
     try {
-      const [b, c, s, bk, inv, iq, t, rm, rr] = await Promise.all([
+      const [b, c, s, bk, inv, iq, t, rm, rr, ex] = await Promise.all([
         supabase.from("branches").select("*"),
         supabase.rpc("get_clients"), // owner-only fields (id_type/id_number) come back null for staff
         supabase.from("services").select("*"),
@@ -512,10 +655,11 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         supabase.from("tags").select("*"),
         supabase.from("rooms").select("*"),
         supabase.from("room_rates").select("*"),
+        supabase.from("expenses").select("*"),
       ]);
-      const firstError = [b, c, s, bk, inv, iq, t, rm, rr].find((r) => r.error)?.error;
+      const firstError = [b, c, s, bk, inv, iq, t, rm, rr, ex].find((r) => r.error)?.error;
       if (firstError) throw firstError;
-      applyFetchedData(b.data, c.data, s.data, bk.data, inv.data, iq.data, t.data, rm.data, rr.data);
+      applyFetchedData(b.data, c.data, s.data, bk.data, inv.data, iq.data, t.data, rm.data, rr.data, ex.data);
       setIsOnline(true);
     } catch (e) {
       // No connection (or Supabase unreachable) — fall back to whatever we last cached locally.
@@ -530,6 +674,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         setTags(cached.tags || []);
         setRooms(cached.rooms || []);
         setRoomRates(cached.roomRates || []);
+        setExpenses(cached.expenses || []);
         setBranchId((prev) => prev || cached.branches?.[0]?.id || null);
         setUsingCache(true);
       }
@@ -579,6 +724,9 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           if (error) throw error;
         } else if (action.type === "updateInvoiceAmount") {
           const { error } = await supabase.from("invoices").update({ amount: action.payload.amount }).eq("id", action.payload.id);
+          if (error) throw error;
+        } else if (action.type === "addExpense") {
+          const { error } = await supabase.from("expenses").insert(action.payload);
           if (error) throw error;
         } else if (action.type === "editBooking") {
           const { error } = await supabase.from("bookings").update(action.payload.updates).eq("id", action.payload.id);
@@ -808,6 +956,22 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const revenue = bInvoices.filter((v) => v.status === "paid").reduce((sum, v) => sum + v.amount, 0);
   const outstanding = bInvoices.filter((v) => v.status === "outstanding").reduce((sum, v) => sum + v.amount, 0);
 
+  const bExpenses = inBranch(expenses);
+
+  // Dashboard "today" figures — separate from Finance's all-time revenue/
+  // outstanding above, since these answer a different question ("what
+  // happened today") rather than "what's the running total ever."
+  const today = todayStr();
+  const activeBookingsToday = bBookings.filter((b) => isBookingActiveOn(b, today));
+  const occupiedRoomIdsToday = new Set(activeBookingsToday.map((b) => b.roomId).filter(Boolean));
+  const roomsAvailableToday = bRooms.length - occupiedRoomIdsToday.size;
+  const revenueToday = bInvoices
+    .filter((v) => v.paidAt && v.paidAt.slice(0, 10) === today)
+    .reduce((sum, v) => sum + v.amount, 0);
+  const outstandingToday = bInvoices
+    .filter((v) => v.status === "outstanding" && bBookings.some((bk) => bk.id === v.bookingId && isBookingActiveOn(bk, today)))
+    .reduce((sum, v) => sum + v.amount, 0);
+
   async function simulateTap(tagId) {
     const tag = tags.find((t) => t.id === tagId);
     if (!tag) return;
@@ -902,6 +1066,20 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     await supabase.from("profiles").update({ role: newRole }).eq("id", id);
   }
 
+  async function addExpense(description, amount) {
+    const id = newId();
+    const payload = { id, branch_id: branchId, description, amount, created_by: session.user.id };
+    const expense = mapExpense({ id, branch_id: branchId, description, amount, created_at: new Date().toISOString() });
+    setExpenses((prev) => [...prev, expense]);
+    try {
+      const { error } = await supabase.from("expenses").insert(payload);
+      if (error) throw error;
+    } catch (e) {
+      enqueueAction({ type: "addExpense", payload });
+      setPendingCount(queueCount());
+    }
+  }
+
   async function updateInvoiceStatus(id, status) {
     // Staff can close out an invoice as paid, no owner needed. Manager can do
     // anything except void — that's the one direction that erases money owed,
@@ -964,6 +1142,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       service_ids: updates.serviceIds,
       check_in: updates.checkIn,
       check_out: updates.checkOut,
+      check_in_time: updates.checkInTime || null,
+      check_out_time: updates.checkOutTime || null,
     };
     setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, ...updates } : b)));
     try {
@@ -1224,19 +1404,39 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         <div style={{ padding: isMobile ? "16px" : "24px 28px", overflowY: "auto", flex: 1 }}>
 
           {tab === "dashboard" && (
-            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(4, 1fr)", gap: isMobile ? "10px" : "16px" }}>
-              {[
-                ["Active bookings", bBookings.filter((b) => b.status === "confirmed").length],
-                ["Open inquiries", bInquiries.filter((i) => i.status !== "completed").length],
-                ["Revenue collected", money(revenue)],
-                ["Outstanding", money(outstanding)],
-              ].map(([label, val]) => (
-                <div key={label} style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "10px", padding: "18px" }}>
-                  <div style={{ fontSize: "12.5px", color: C.inkSoft, marginBottom: "8px" }}>{label}</div>
-                  <div className="fr" style={{ fontSize: "24px", fontWeight: 500 }}>{val}</div>
-                </div>
-              ))}
-              <div style={{ gridColumn: isMobile ? "span 2" : "span 4" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? "10px" : "16px" }}>
+              <h3 className="fr" style={{ margin: 0, fontSize: "16px", fontWeight: 500, color: C.inkSoft }}>
+                Today · {new Date().toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}
+              </h3>
+
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(4, 1fr)", gap: isMobile ? "10px" : "16px" }}>
+                {[
+                  ["Active bookings today", activeBookingsToday.length],
+                  ["Rooms available", roomsAvailableToday],
+                  ...(canManage ? [
+                    ["Revenue today", money(revenueToday)],
+                    ["Outstanding today", money(outstandingToday)],
+                  ] : []),
+                ].map(([label, val]) => (
+                  <div key={label} style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "10px", padding: "18px" }}>
+                    <div style={{ fontSize: "12.5px", color: C.inkSoft, marginBottom: "8px" }}>{label}</div>
+                    <div className="fr" style={{ fontSize: "24px", fontWeight: 500 }}>{val}</div>
+                  </div>
+                ))}
+              </div>
+
+              <Panel title="Rooms">
+                <RoomGrid rooms={bRooms} bookings={bBookings} clientName={clientName} canManage={canManage} />
+              </Panel>
+
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? "10px" : "16px" }}>
+                <ExpensesPanel
+                  expenses={bExpenses}
+                  canManage={canManage}
+                  showAll={showAllExpenses}
+                  onToggleShowAll={() => setShowAllExpenses((s) => !s)}
+                  onAdd={addExpense}
+                />
                 <Panel title="Recent inquiries">
                   <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                     {bInquiries.slice(0, 4).map((iq) => (
@@ -1248,6 +1448,9 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                         <Pill tone={iq.status}>{iq.status}</Pill>
                       </div>
                     ))}
+                    {bInquiries.length === 0 && (
+                      <span style={{ fontSize: "12.5px", color: C.inkSoft }}>No inquiries yet.</span>
+                    )}
                   </div>
                 </Panel>
               </div>
@@ -1704,6 +1907,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
               service_ids: newBooking.serviceIds,
               check_in: newBooking.checkIn,
               check_out: newBooking.checkOut,
+              check_in_time: newBooking.checkInTime || null,
+              check_out_time: newBooking.checkOutTime || null,
               status: newBooking.status,
             };
             try {
@@ -1737,7 +1942,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
               const tempBookingId = "temp-" + Date.now();
               enqueueAction({ type: "addBooking", payload, tempId: tempBookingId });
               setPendingCount(queueCount());
-              setBookings((prev) => [...prev, { id: tempBookingId, branchId, clientId: newBooking.clientId, roomId: newBooking.roomId, serviceIds: newBooking.serviceIds, checkIn: newBooking.checkIn, checkOut: newBooking.checkOut, status: newBooking.status }]);
+              setBookings((prev) => [...prev, { id: tempBookingId, branchId, clientId: newBooking.clientId, roomId: newBooking.roomId, serviceIds: newBooking.serviceIds, checkIn: newBooking.checkIn, checkOut: newBooking.checkOut, checkInTime: newBooking.checkInTime || null, checkOutTime: newBooking.checkOutTime || null, status: newBooking.status }]);
               // Created while offline: no real booking id to attach an invoice to
               // yet, so this one gets its invoice at confirm-time instead (the
               // same fallback mentioned above).
@@ -1885,6 +2090,8 @@ function EditBookingModal({ booking, clients, services, rooms, roomRates, existi
   const [serviceIds, setServiceIds] = useState(booking.serviceIds);
   const [checkIn, setCheckIn] = useState(booking.checkIn === "TBC" ? "" : booking.checkIn);
   const [checkOut, setCheckOut] = useState(booking.checkOut === "TBC" ? "" : booking.checkOut);
+  const [checkInTime, setCheckInTime] = useState(booking.checkInTime || "");
+  const [checkOutTime, setCheckOutTime] = useState(booking.checkOutTime || "");
   const [saving, setSaving] = useState(false);
 
   const toggleService = (id) =>
@@ -1896,7 +2103,7 @@ function EditBookingModal({ booking, clients, services, rooms, roomRates, existi
 
   async function handleSave() {
     setSaving(true);
-    await onSave({ clientId, roomId: roomId || null, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC" });
+    await onSave({ clientId, roomId: roomId || null, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC", checkInTime: checkInTime || null, checkOutTime: checkOutTime || null });
     setSaving(false);
   }
 
@@ -1949,6 +2156,19 @@ function EditBookingModal({ booking, clients, services, rooms, roomRates, existi
             <input type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
           </div>
         </div>
+        <div style={{ display: "flex", gap: "10px", marginBottom: checkIn && checkOut && checkIn === checkOut ? "6px" : "18px" }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-in time (optional)</label>
+            <input type="time" value={checkInTime} onChange={(e) => setCheckInTime(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-out time (optional)</label>
+            <input type="time" value={checkOutTime} onChange={(e) => setCheckOutTime(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
+          </div>
+        </div>
+        <p style={{ fontSize: "11px", color: C.inkSoft, margin: "-12px 0 14px" }}>
+          Times show up on the room grid on the Dashboard — helpful when a room turns over more than once in a day, but not required.
+        </p>
         {checkIn && checkOut && checkIn === checkOut && (
           <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 6px" }}>
             Same-day check-in/check-out leaves the room vacant that night, so it won't block another booking.
@@ -1986,6 +2206,8 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
   const [serviceIds, setServiceIds] = useState([]);
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
+  const [checkInTime, setCheckInTime] = useState("");
+  const [checkOutTime, setCheckOutTime] = useState("");
   const [saving, setSaving] = useState(false);
 
   const matchedClient = clients.find((c) => c.name.trim().toLowerCase() === clientQuery.trim().toLowerCase());
@@ -2020,7 +2242,7 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
       if (!created) { setSaving(false); return; }
       finalClientId = created.id;
     }
-    const ok = await onSave({ clientId: finalClientId, roomId: roomId || null, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC", status: "pending" });
+    const ok = await onSave({ clientId: finalClientId, roomId: roomId || null, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC", checkInTime: checkInTime || null, checkOutTime: checkOutTime || null, status: "pending" });
     setSaving(false);
     // onSave returns false on a real conflict (e.g. room double-booked) — leave the
     // modal open with what the person typed so they can just change the room/dates.
@@ -2149,6 +2371,19 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
             <input type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
           </div>
         </div>
+        <div style={{ display: "flex", gap: "10px", marginBottom: "6px" }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-in time (optional)</label>
+            <input type="time" value={checkInTime} onChange={(e) => setCheckInTime(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-out time (optional)</label>
+            <input type="time" value={checkOutTime} onChange={(e) => setCheckOutTime(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
+          </div>
+        </div>
+        <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 18px" }}>
+          Times show up on the room grid on the Dashboard — helpful when a room turns over more than once in a day, but not required.
+        </p>
         {checkIn && checkOut && checkIn === checkOut && (
           <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 18px" }}>
             Same-day check-in/check-out leaves the room vacant that night, so it won't block another booking.
