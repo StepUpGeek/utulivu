@@ -267,7 +267,7 @@ function StatusPicker({ value, onChange }) {
 
 const INVOICE_STATUSES = ["outstanding", "paid", "void"];
 
-function InvoiceStatusPicker({ value, onChange }) {
+function InvoiceStatusPicker({ value, onChange, options = INVOICE_STATUSES }) {
   const tones = {
     outstanding: { bg: "#F3DEDE", fg: C.red },
     paid: { bg: C.signalSoft, fg: "#1E6E67" },
@@ -284,7 +284,7 @@ function InvoiceStatusPicker({ value, onChange }) {
         padding: "4px 8px", borderRadius: "999px", border: "none", cursor: "pointer",
       }}
     >
-      {INVOICE_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+      {options.map((s) => <option key={s} value={s}>{s}</option>)}
     </select>
   );
 }
@@ -438,7 +438,7 @@ function Login({ onSignIn, onBack }) {
 --------------------------------------------------------- */
 function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
-  const [role, setRole] = useState(null); // 'owner' | 'staff' | null while loading
+  const [role, setRole] = useState(null); // 'owner' | 'manager' | 'staff' | null while loading
   const [branches, setBranches] = useState([]);
   const [branchId, setBranchId] = useState(null);
   const [tab, setTab] = useState("dashboard");
@@ -466,6 +466,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [generatingId, setGeneratingId] = useState(null);
   const [requests, setRequests] = useState([]);
+  const [showAllRequests, setShowAllRequests] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [usingCache, setUsingCache] = useState(false);
   const [pendingCount, setPendingCount] = useState(queueCount());
@@ -754,6 +755,13 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     );
   }
 
+  // Owner and manager share almost all operational authority — edit/delete
+  // bookings & clients, see client ID numbers, see historical/occupancy data.
+  // Two things stay owner-exclusive regardless: voiding an invoice (a
+  // deliberate financial write-off) and team/role management (who has
+  // authority at all) — everything else, manager runs it like they own it.
+  const canManage = role === "owner" || role === "manager";
+
   const branch = branches.find((b) => b.id === branchId);
   const inBranch = (arr) => arr.filter((x) => x.branchId === branchId);
   const bClients = inBranch(clients);
@@ -889,18 +897,21 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     setTeamLoading(false);
   }
 
-  async function toggleRole(id, currentRole) {
-    const nextRole = currentRole === "owner" ? "staff" : "owner";
-    setTeamMembers((prev) => prev.map((m) => (m.id === id ? { ...m, role: nextRole } : m)));
-    await supabase.from("profiles").update({ role: nextRole }).eq("id", id);
+  async function setMemberRole(id, newRole) {
+    setTeamMembers((prev) => prev.map((m) => (m.id === id ? { ...m, role: newRole } : m)));
+    await supabase.from("profiles").update({ role: newRole }).eq("id", id);
   }
 
   async function updateInvoiceStatus(id, status) {
-    // Staff handle payment at the counter, so they can close out an invoice as
-    // paid without needing the owner — but only the owner can void one or move
-    // it back to outstanding, since that's the direction that erases money owed.
+    // Staff can close out an invoice as paid, no owner needed. Manager can do
+    // anything except void — that's the one direction that erases money owed,
+    // and stays a deliberate owner-only write-off.
     // (This must also be allowed server-side — see the accompanying SQL note.)
-    if (role !== "owner" && status !== "paid") return;
+    const allowed =
+      role === "owner" ||
+      (role === "manager" && status !== "void") ||
+      (role === "staff" && status === "paid");
+    if (!allowed) return;
     setInvoices((prev) => prev.map((v) => (v.id === id ? { ...v, status } : v)));
     try {
       const { error } = await supabase.from("invoices").update({ status }).eq("id", id);
@@ -912,13 +923,19 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   }
 
   // Shared invoice control used on both the Bookings and Finance tabs so
-  // marking a payment works the same wherever staff happen to be. The owner
-  // gets the full picker (paid/outstanding/void); staff get a status pill plus
-  // a one-tap "Mark paid" button that only appears while it's outstanding.
+  // marking a payment works the same wherever staff happen to be. Owner gets
+  // the full picker (paid/outstanding/void). Manager gets the same picker
+  // minus "void" — unless it's already void, in which case that's shown
+  // read-only rather than a dropdown that can't represent its own value.
+  // Staff get a status pill plus a one-tap "Mark paid" button while outstanding.
   function invoiceControl(invoice) {
     if (!invoice) return <span style={{ fontSize: "12.5px", color: C.inkSoft }}>—</span>;
     if (role === "owner") {
       return <InvoiceStatusPicker value={invoice.status} onChange={(s) => updateInvoiceStatus(invoice.id, s)} />;
+    }
+    if (role === "manager") {
+      if (invoice.status === "void") return <Pill tone="void">void</Pill>;
+      return <InvoiceStatusPicker value={invoice.status} onChange={(s) => updateInvoiceStatus(invoice.id, s)} options={["outstanding", "paid"]} />;
     }
     return (
       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -936,7 +953,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   }
 
   async function saveBookingEdit(id, updates) {
-    if (role !== "owner") return; // enforced server-side too, via the booking_edit_guard trigger
+    if (!canManage) return; // enforced server-side too — see the accompanying SQL note
     if (!isRoomAvailable(updates.roomId, updates.checkIn, updates.checkOut, bBookings, id)) {
       alert("That room is already booked for the selected dates. Please choose a different room or date range.");
       return;
@@ -984,7 +1001,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   }
 
   async function deleteBooking(id) {
-    if (role !== "owner") return;
+    if (!canManage) return; // enforced server-side too — see the accompanying SQL note
     if (!window.confirm("Delete this booking? This can't be undone.")) return;
     setBookings((prev) => prev.filter((b) => b.id !== id));
     try {
@@ -997,7 +1014,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   }
 
   async function deleteClient(id) {
-    if (role !== "owner") return;
+    if (!canManage) return; // enforced server-side too — see the accompanying SQL note
     if (!window.confirm("Delete this client? This can't be undone.")) return;
     const prevClients = clients;
     setClients((prev) => prev.filter((c) => c.id !== id));
@@ -1042,6 +1059,15 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   }
 
   const newRequestCount = requests.filter((r) => (r.stage || "sent") === "sent").length;
+
+  // Staff only ever see today's requests — history is a manager/owner view,
+  // consistent with the same "staff get today's actionable state, not
+  // historical patterns" rule applied to occupancy and client records.
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const visibleRequests = canManage && showAllRequests
+    ? requests
+    : requests.filter((r) => new Date(r.created_at) >= todayStart);
 
   const NAV = [
     { id: "dashboard", label: "Dashboard", icon: LayoutGrid },
@@ -1229,15 +1255,28 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           )}
 
           {tab === "requests" && (
-            <Panel title="Guest requests">
+            <Panel
+              title="Guest requests"
+              action={
+                canManage && (
+                  <button
+                    onClick={() => setShowAllRequests((s) => !s)}
+                    style={{ fontSize: "12.5px", border: `1px solid ${C.line}`, background: "none", borderRadius: "6px", padding: "6px 12px", cursor: "pointer", color: C.clayDeep }}
+                  >
+                    {showAllRequests ? "Show today only" : "View previous days"}
+                  </button>
+                )
+              }
+            >
               <p style={{ fontSize: "13.5px", color: C.inkSoft, marginTop: 0, marginBottom: "18px" }}>
                 Live requests sent from the Guest portal — this list updates automatically, no refresh needed.
+                {!canManage && " Showing today's requests."}
               </p>
-              {requests.length === 0 ? (
-                <p style={{ fontSize: "13.5px", color: C.inkSoft }}>No requests yet. Try sending one from the Guest portal.</p>
+              {visibleRequests.length === 0 ? (
+                <p style={{ fontSize: "13.5px", color: C.inkSoft }}>{showAllRequests ? "No requests found." : "No requests yet today."}</p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                  {requests.map((r) => {
+                  {visibleRequests.map((r) => {
                     const isRich = RICH_STAGE_CATEGORIES.includes(r.category);
                     const stage = r.stage || "sent";
                     const roomHeader = r.room_number
@@ -1326,7 +1365,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                     <th>Status</th>
                     <th>Payment</th>
                     <th>Guest access</th>
-                    {role === "owner" && <th></th>}
+                    {canManage && <th></th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -1349,7 +1388,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                           {generatingId === bk.id ? "Generating…" : "Generate code"}
                         </button>
                       </td>
-                      {role === "owner" && (
+                      {canManage && (
                         <td>
                           <div style={{ display: "flex", gap: "6px" }}>
                             <button
@@ -1390,14 +1429,14 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                     <div>
                       <div style={{ fontWeight: 500, marginBottom: "4px" }}>{c.name}</div>
                       <div style={{ fontSize: "13px", color: C.inkSoft }}>{c.phone}</div>
-                      {role === "owner" && c.idNumber && (
+                      {canManage && c.idNumber && (
                         <div style={{ fontSize: "12px", color: C.inkSoft, marginTop: "4px" }}>{c.idType || "ID"}: {c.idNumber}</div>
                       )}
-                      {role === "owner" && !c.idNumber && (
+                      {canManage && !c.idNumber && (
                         <div style={{ fontSize: "11.5px", color: C.amber, marginTop: "4px" }}>ID not on file</div>
                       )}
                     </div>
-                    {role === "owner" && (
+                    {canManage && (
                       <button
                         onClick={() => deleteClient(c.id)}
                         style={{ fontSize: "12px", border: "none", background: "none", color: C.red, cursor: "pointer", padding: "2px" }}
@@ -1574,29 +1613,36 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           {tab === "team" && role === "owner" && (
             <Panel title="Team">
               <p style={{ fontSize: "13.5px", color: C.inkSoft, marginTop: 0, marginBottom: "18px" }}>
-                Toggle who has owner access (full control, including editing/deleting bookings and clients, and finance) versus staff access (day-to-day work only).
+                Owner: full control, including who has access. Manager: runs day-to-day operations like an owner, but can't void invoices or manage the team. Staff: day-to-day work only — can't edit or delete bookings/clients, can't see client ID numbers, and can only mark an invoice paid.
               </p>
               {teamLoading ? (
                 <p style={{ fontSize: "13.5px", color: C.inkSoft }}>Loading…</p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                  {teamMembers.map((m) => (
+                  {teamMembers.map((m) => {
+                    const isSelf = m.id === session.user.id;
+                    return (
                     <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px", border: `1px solid ${C.line}`, borderRadius: "9px" }}>
                       <div>
                         <div style={{ fontSize: "14px", fontWeight: 500 }}>{m.email}</div>
-                        {m.id === session.user.id && <div style={{ fontSize: "11.5px", color: C.inkSoft }}>This is you</div>}
+                        {isSelf && <div style={{ fontSize: "11.5px", color: C.inkSoft }}>This is you</div>}
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        <Pill tone={m.role === "owner" ? "confirmed" : "default"}>{m.role}</Pill>
-                        <button
-                          onClick={() => toggleRole(m.id, m.role)}
-                          style={{ fontSize: "12.5px", border: `1px solid ${C.line}`, background: "none", borderRadius: "6px", padding: "6px 12px", cursor: "pointer", color: C.clayDeep }}
+                        <Pill tone={m.role === "owner" ? "confirmed" : m.role === "manager" ? "quoted" : "default"}>{m.role}</Pill>
+                        <select
+                          value={m.role}
+                          disabled={isSelf}
+                          onChange={(e) => setMemberRole(m.id, e.target.value)}
+                          title={isSelf ? "You can't change your own role" : undefined}
+                          style={{ fontSize: "12.5px", border: `1px solid ${C.line}`, borderRadius: "6px", padding: "6px 10px", background: isSelf ? C.paper : "none", color: isSelf ? C.inkSoft : C.ink, cursor: isSelf ? "default" : "pointer" }}
                         >
-                          Make {m.role === "owner" ? "staff" : "owner"}
-                        </button>
+                          <option value="owner">owner</option>
+                          <option value="manager">manager</option>
+                          <option value="staff">staff</option>
+                        </select>
                       </div>
                     </div>
-                  ))}
+                  );})}
                   {teamMembers.length === 0 && (
                     <p style={{ fontSize: "13.5px", color: C.inkSoft }}>No team members yet — create accounts in Supabase's Authentication → Users, and they'll appear here automatically.</p>
                   )}
