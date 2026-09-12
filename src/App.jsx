@@ -100,6 +100,20 @@ function nightsBetween(checkIn, checkOut) {
   return diff > 0 ? diff : 1;
 }
 
+// "Sep 10 → Sep 12 (2 nights)" — no year (day-to-day staff work doesn't need
+// it, and dropping it shortens the column), with the night count spelled out
+// instead of making someone do the date math themselves.
+function formatDuration(checkIn, checkOut) {
+  const short = (d) => new Date(d).toLocaleDateString([], { month: "short", day: "numeric" });
+  const inLabel = checkIn && checkIn !== "TBC" ? short(checkIn) : (checkIn || "TBC");
+  const outLabel = checkOut && checkOut !== "TBC" ? short(checkOut) : (checkOut || "TBC");
+  if (!checkIn || !checkOut || checkIn === "TBC" || checkOut === "TBC") {
+    return `${inLabel} → ${outLabel}`;
+  }
+  const nights = nightsBetween(checkIn, checkOut);
+  return `${inLabel} → ${outLabel} (${nights} night${nights === 1 ? "" : "s"})`;
+}
+
 // A room is unavailable for a proposed stay if it overlaps an existing,
 // non-cancelled booking on that same room — mirrors the DB trigger
 // (room_double_booking_guard) so staff see the conflict before they even
@@ -125,6 +139,20 @@ function isRoomAvailable(roomId, checkIn, checkOut, existingBookings, excludeBoo
 // Looks up the nightly rate for a room's type at a branch. Every room of the
 // same type at the same branch shares one rate — the room dropdown is the
 // only place accommodation price comes from now, there's no separate checkbox.
+const FAILED_ACTION_LABELS = {
+  addClient: "Adding a client",
+  addBooking: "Creating a booking",
+  updateBookingStatus: "Updating a booking's status",
+  updateInquiryStatus: "Updating an inquiry",
+  tapTag: "An NFC tap",
+  addInvoice: "Creating an invoice",
+  updateInvoiceStatus: "Updating an invoice",
+  updateInvoiceAmount: "Updating an invoice amount",
+  editBooking: "Editing a booking",
+  deleteBooking: "Deleting a booking",
+  deleteClient: "Deleting a client",
+};
+
 function rateForRoom(room, roomRates) {
   if (!room) return 0;
   const match = roomRates.find((rr) => rr.branchId === room.branchId && rr.roomType === room.roomType);
@@ -212,7 +240,7 @@ function Pill({ tone = "default", children }) {
   );
 }
 
-const BOOKING_STATUSES = ["pending", "confirmed", "completed", "cancelled"];
+const BOOKING_STATUSES = ["pending", "confirmed", "completed"];
 
 function StatusPicker({ value, onChange }) {
   const tones = {
@@ -442,6 +470,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [usingCache, setUsingCache] = useState(false);
   const [pendingCount, setPendingCount] = useState(queueCount());
   const [syncing, setSyncing] = useState(false);
+  const [syncFailures, setSyncFailures] = useState([]);
+  const [showSyncFailures, setShowSyncFailures] = useState(false);
 
   function applyFetchedData(b, c, s, bk, inv, iq, t, rm, rr) {
     const mapped = {
@@ -514,6 +544,9 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       return;
     }
     setSyncing(true);
+    let hadTransientFailure = false;
+    const newlyFailed = [];
+
     for (const action of queue) {
       try {
         if (action.type === "addClient") {
@@ -558,15 +591,41 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         }
         removeFromQueue(action.id);
       } catch (e) {
-        // Still offline, or this one failed — stop here and try again next time we're online.
-        setSyncing(false);
-        setPendingCount(queueCount());
-        return;
+        // A Postgres error code means the request actually reached the server
+        // and was rejected for a real reason (a double-booked room, a broken
+        // reference, a permission check) — retrying the exact same payload
+        // will never succeed, so retrying it forever would just jam every
+        // other queued action behind it. No error code usually means the
+        // request never reached the server at all (still offline, or a
+        // one-off network hiccup) — that's worth trying again later.
+        if (e?.code) {
+          removeFromQueue(action.id);
+          newlyFailed.push({ action, message: e.message || "This change couldn't be saved." });
+          // Don't leave a phantom entry on screen for something that will
+          // never actually exist on the server.
+          if (action.tempId) {
+            if (action.type === "addClient") setClients((prev) => prev.filter((c) => c.id !== action.tempId));
+            if (action.type === "addBooking") setBookings((prev) => prev.filter((b) => b.id !== action.tempId));
+          }
+        } else {
+          hadTransientFailure = true;
+        }
+        // Deliberately no `return` here — one bad action shouldn't block
+        // everything queued behind it.
       }
     }
+
     setPendingCount(queueCount());
     setSyncing(false);
-    fetchAll();
+    if (newlyFailed.length > 0) {
+      setSyncFailures((prev) => [...prev, ...newlyFailed]);
+    }
+    // Only worth a full refetch if we actually made progress syncing
+    // something — if everything's still stuck offline, there's nothing new
+    // to pull down yet.
+    if (!hadTransientFailure || newlyFailed.length > 0) {
+      fetchAll();
+    }
   }
 
   useEffect(() => {
@@ -638,10 +697,10 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       })
       .subscribe();
 
-    // Invoices can now change from outside this browser tab's own actions —
-    // most notably the database trigger that voids an invoice automatically
-    // when its booking is cancelled (by either role). This keeps the Bookings
-    // and Finance tabs current without needing a manual refresh.
+    // Invoices can change from outside this browser tab's own actions — e.g.
+    // another staff member's session, or the owner voiding one from a
+    // different tab. This keeps Bookings and Finance current without a
+    // manual refresh.
     const invoicesChannel = supabase
       .channel("invoices_live")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "invoices" }, (payload) => {
@@ -797,14 +856,14 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       setPendingCount(queueCount());
     }
 
-    // Under the old flow, an invoice only existed once a booking was
-    // confirmed. Now invoices are created the moment a booking is made (see
-    // the AddBookingModal onSave below), so this is just a safety net for
-    // anything that somehow reached "confirmed" without one — e.g. a booking
-    // that was created while offline. Cancellation no longer voids the
-    // invoice here: that now happens via a database trigger on bookings, so
-    // it fires consistently regardless of who cancels it (owner or staff),
-    // without needing a special permission carve-out on invoices.
+    // Invoices are created the moment a booking is made (see AddBookingModal's
+    // onSave below), so this is just a safety net for anything that somehow
+    // reached "confirmed" without one — e.g. a booking created while offline.
+    // There's no "cancelled" status anymore — a guest who backs out gets
+    // checked out instead, so the room reads as previously sold rather than
+    // erased. If that stay shouldn't be billed, the owner voids the invoice
+    // directly (Finance or Bookings tab) — that's a deliberate financial
+    // write-off now, not an automatic side effect of a status change.
     if (!bk) return;
     const existingInvoice = invoices.find((v) => v.bookingId === id);
 
@@ -1065,6 +1124,39 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             <ConnectionBadge isOnline={isOnline} usingCache={usingCache} syncing={syncing} pendingCount={pendingCount} />
+          {syncFailures.length > 0 && (
+            <div style={{ position: "relative" }}>
+              <button
+                onClick={() => setShowSyncFailures((s) => !s)}
+                className="ws"
+                style={{ background: "#F3DEDE", color: C.red, border: "none", borderRadius: "999px", padding: "5px 11px", fontSize: "12px", fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap" }}
+              >
+                {syncFailures.length} sync issue{syncFailures.length === 1 ? "" : "s"}
+              </button>
+              {showSyncFailures && (
+                <div style={{
+                  position: "absolute", right: 0, top: "34px", background: C.paperRaised,
+                  border: `1px solid ${C.line}`, borderRadius: "8px", boxShadow: "0 6px 18px rgba(22,35,59,0.12)",
+                  width: "280px", zIndex: 10, maxHeight: "320px", overflowY: "auto"
+                }}>
+                  {syncFailures.map((f, i) => (
+                    <div key={f.action.id} style={{ padding: "10px 14px", borderTop: i === 0 ? "none" : `1px solid ${C.line}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
+                        <div style={{ fontSize: "13px", fontWeight: 500 }}>{FAILED_ACTION_LABELS[f.action.type] || f.action.type}</div>
+                        <button
+                          onClick={() => setSyncFailures((prev) => prev.filter((x) => x.action.id !== f.action.id))}
+                          style={{ background: "none", border: "none", cursor: "pointer", color: C.inkSoft, flexShrink: 0 }}
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                      <div style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "2px" }}>{f.message}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ position: "relative" }}>
             <button
               onClick={() => setShowBranchMenu((s) => !s)}
@@ -1230,7 +1322,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                     <th style={{ paddingBottom: "10px" }}>Client</th>
                     <th>Room</th>
                     <th>Services</th>
-                    <th>Dates</th>
+                    <th>Duration</th>
                     <th>Status</th>
                     <th>Payment</th>
                     <th>Guest access</th>
@@ -1245,7 +1337,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                       <td style={{ padding: "10px 0" }}>{clientName(bk.clientId)}</td>
                       <td>{roomLabel(bk)}</td>
                       <td>{serviceNames(bk.serviceIds)}</td>
-                      <td>{bk.checkIn} → {bk.checkOut}</td>
+                      <td>{formatDuration(bk.checkIn, bk.checkOut)}</td>
                       <td><StatusPicker value={bk.status} onChange={(s) => updateBookingStatus(bk.id, s)} /></td>
                       <td>{invoiceControl(inv)}</td>
                       <td>
@@ -1596,9 +1688,10 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                 alert("That room is already booked for the selected dates. Please choose a different room or date range.");
                 return false;
               }
-              enqueueAction({ type: "addBooking", payload });
+              const tempBookingId = "temp-" + Date.now();
+              enqueueAction({ type: "addBooking", payload, tempId: tempBookingId });
               setPendingCount(queueCount());
-              setBookings((prev) => [...prev, { id: "temp-" + Date.now(), branchId, clientId: newBooking.clientId, roomId: newBooking.roomId, serviceIds: newBooking.serviceIds, checkIn: newBooking.checkIn, checkOut: newBooking.checkOut, status: newBooking.status }]);
+              setBookings((prev) => [...prev, { id: tempBookingId, branchId, clientId: newBooking.clientId, roomId: newBooking.roomId, serviceIds: newBooking.serviceIds, checkIn: newBooking.checkIn, checkOut: newBooking.checkOut, status: newBooking.status }]);
               // Created while offline: no real booking id to attach an invoice to
               // yet, so this one gets its invoice at confirm-time instead (the
               // same fallback mentioned above).
@@ -1893,12 +1986,13 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
       position: "fixed", inset: 0, background: "rgba(22,35,59,0.35)",
       display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20
     }}>
-      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 92vw)", maxHeight: "88vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+      <div className="ws" style={{ background: "#fff", borderRadius: "12px", width: "min(380px, 92vw)", maxHeight: "88vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "24px 24px 16px" }}>
           <h3 className="fr" style={{ margin: 0, fontSize: "19px" }}>New booking</h3>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={18} /></button>
         </div>
 
+        <div style={{ overflowY: "auto", flex: 1, padding: "0 24px" }}>
         <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Client name</label>
         <input
           list="client-name-options"
@@ -2014,7 +2108,9 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
             Same-day check-in/check-out leaves the room vacant that night, so it won't block another booking.
           </p>
         )}
+        </div>
 
+        <div style={{ padding: "14px 24px 24px", borderTop: `1px solid ${C.line}` }}>
         <button
           disabled={!canSave || saving}
           onClick={handleSave}
@@ -2027,6 +2123,7 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
         >
           <Check size={16} /> {saving ? "Saving…" : "Save booking"}
         </button>
+        </div>
       </div>
     </div>
   );
@@ -2340,7 +2437,7 @@ function GuestApp({ onExit, initialCode }) {
   const [loading, setLoading] = useState(Boolean(startCode));
   const [error, setError] = useState("");
   const [airtimeAmount, setAirtimeAmount] = useState("");
-  const [airtimeNetwork, setAirtimeNetwork] = useState("Vodacom");
+  const [airtimeNetwork, setAirtimeNetwork] = useState("");
   const [airtimePhone, setAirtimePhone] = useState("");
   const [airtimeSending, setAirtimeSending] = useState(false);
   const [airtimeSent, setAirtimeSent] = useState(false);
@@ -2404,9 +2501,9 @@ function GuestApp({ onExit, initialCode }) {
 
   async function requestItem(item) {
     setSendingId(item.id);
-    const qty = item.category === "Kitchen" ? (quantities[item.id] || 1) : 1;
+    const hasQuantity = item.category === "Kitchen" || item.category === "Laundry";
+    const qty = hasQuantity ? (quantities[item.id] || 1) : 1;
     const qtyLabel = qty > 1 ? ` × ${qty}` : "";
-    const pickupNote = item.category === "Counter" ? " — pickup at counter" : "";
     const priceLabel = item.price > 0 ? `TSh ${Number(item.price).toLocaleString()}` : "Free";
     await supabase.from("service_requests").insert({
       code: session.access.code,
@@ -2415,7 +2512,7 @@ function GuestApp({ onExit, initialCode }) {
       room_type: session.access.room_type || null,
       category: item.category,
       quantity: qty,
-      message: `${session.access.guest_name} requested ${item.name}${qtyLabel}${pickupNote} (${priceLabel})`,
+      message: `${session.access.guest_name} requested ${item.name}${qtyLabel} (${priceLabel})`,
     });
     setSendingId(null);
     setRequestedIds((prev) => [...prev, item.id]);
@@ -2559,7 +2656,7 @@ function GuestApp({ onExit, initialCode }) {
               <div style={{ marginBottom: "8px" }}>
                 <span style={{ fontSize: "12px", color: C.inkSoft }}>Your room</span>
                 <div className="fr" style={{ fontSize: "22px", fontWeight: 500, color: C.ink }}>
-                  {access.room_number}{access.room_type ? ` · ${access.room_type}` : ""}
+                  Room {access.room_number}{access.room_type ? ` · ${access.room_type}` : ""}
                 </div>
               </div>
             )}
@@ -2606,14 +2703,13 @@ function GuestApp({ onExit, initialCode }) {
               </div>
               <p style={{ fontSize: "13px", color: C.inkSoft, marginTop: 0, marginBottom: "14px" }}>
                 {activeCategory === "Kitchen" && "Pick a quantity and send your order to the kitchen."}
-                {activeCategory === "Counter" && "Requested items are ready for pickup at the counter."}
-                {activeCategory === "Amenities" && "Tap to request any item — the front desk will bring it to you."}
-                {activeCategory === "Laundry" && "Laundry is available for a fee — ironing is complimentary."}
+                {(activeCategory === "Counter" || activeCategory === "Amenities") && "Tap to request any item — staff will bring it to your room."}
+                {activeCategory === "Laundry" && "Pick a quantity per item — ironing is complimentary."}
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 {guestServices.filter((item) => item.category === activeCategory).map((item) => {
                   const requested = requestedIds.includes(item.id);
-                  const isKitchen = item.category === "Kitchen";
+                  const hasQuantity = item.category === "Kitchen" || item.category === "Laundry";
                   const qty = quantities[item.id] || 1;
                   return (
                     <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${C.line}`, gap: "10px" }}>
@@ -2625,7 +2721,7 @@ function GuestApp({ onExit, initialCode }) {
                         <span style={{ fontSize: "12.5px", color: "#1E6E67", fontWeight: 500, whiteSpace: "nowrap" }}>Requested</span>
                       ) : (
                         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          {isKitchen && (
+                          {hasQuantity && (
                             <input
                               type="number"
                               min="1"
@@ -2728,6 +2824,7 @@ function GuestApp({ onExit, initialCode }) {
                   disabled={isExpired || airtimeSending}
                   style={{ padding: "9px 10px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13.5px", boxSizing: "border-box" }}
                 >
+                  <option value="">Tap to select network</option>
                   {["Vodacom", "Tigo", "Airtel", "Halotel"].map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
                 <input
@@ -2741,7 +2838,8 @@ function GuestApp({ onExit, initialCode }) {
                 <div style={{ display: "flex", gap: "8px" }}>
                   <input
                     type="number"
-                    min="0"
+                    min="500"
+                    step="500"
                     value={airtimeAmount}
                     onChange={(e) => setAirtimeAmount(e.target.value)}
                     placeholder="Amount in TSh"
@@ -2749,7 +2847,7 @@ function GuestApp({ onExit, initialCode }) {
                     style={{ flex: 1, padding: "9px 10px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13.5px", boxSizing: "border-box" }}
                   />
                   <button
-                    disabled={isExpired || airtimeSending || !airtimeAmount || Number(airtimeAmount) <= 0 || !airtimePhone.trim()}
+                    disabled={isExpired || airtimeSending || !airtimeNetwork || !airtimeAmount || Number(airtimeAmount) <= 0 || !airtimePhone.trim()}
                     onClick={async () => {
                       setAirtimeSending(true);
                       await supabase.from("service_requests").insert({
