@@ -1143,8 +1143,13 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   }
 
   async function setMemberRole(id, newRole) {
+    const prevMembers = teamMembers;
     setTeamMembers((prev) => prev.map((m) => (m.id === id ? { ...m, role: newRole } : m)));
-    await supabase.from("profiles").update({ role: newRole }).eq("id", id);
+    const { error } = await supabase.from("profiles").update({ role: newRole }).eq("id", id);
+    if (error) {
+      setTeamMembers(prevMembers); // roll back — the database rejected it, don't show a role that isn't real
+      alert("Couldn't update that role: " + error.message);
+    }
   }
 
   async function addExpense(description, amount) {
