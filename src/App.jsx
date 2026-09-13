@@ -116,9 +116,10 @@ function formatDuration(checkIn, checkOut) {
 }
 
 // A room is unavailable for a proposed stay if it overlaps an existing,
-// non-cancelled booking on that same room — mirrors the DB trigger
-// (room_double_booking_guard) so staff see the conflict before they even
-// try to save. A booking whose check-in equals its check-out never
+// still-active booking on that same room — "completed" (whether a stay
+// finished naturally or was checked out early because it fell through)
+// frees the room immediately, matching how the Dashboard's room grid
+// already treats it. A booking whose check-in equals its check-out never
 // occupies the room overnight, so it's excluded on both sides.
 function isRoomAvailable(roomId, checkIn, checkOut, existingBookings, excludeBookingId) {
   if (!roomId || !checkIn || !checkOut || checkIn === "TBC" || checkOut === "TBC") return true;
@@ -128,7 +129,7 @@ function isRoomAvailable(roomId, checkIn, checkOut, existingBookings, excludeBoo
   return !existingBookings.some((b) => {
     if (b.id === excludeBookingId) return false;
     if (b.roomId !== roomId) return false;
-    if (b.status === "cancelled") return false;
+    if (b.status === "completed") return false;
     if (!b.checkIn || !b.checkOut || b.checkIn === "TBC" || b.checkOut === "TBC") return false;
     if (b.checkIn === b.checkOut) return false;
     const bIn = new Date(b.checkIn).getTime();
