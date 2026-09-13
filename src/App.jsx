@@ -368,7 +368,7 @@ function Login({ onSignIn, onBack }) {
     const { data, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     setSigningIn(false);
     if (authError || !data.session) {
-      setError("Incorrect email or password.");
+      setError(authError?.message || "Incorrect email or password.");
       return;
     }
     onSignIn(data.session);
