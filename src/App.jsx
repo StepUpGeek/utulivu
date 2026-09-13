@@ -576,6 +576,85 @@ function ExpensesPanel({ expenses, canManage, showAll, onToggleShowAll, onAdd })
 /* ---------------------------------------------------------
    Main app
 --------------------------------------------------------- */
+// Lets staff log a service order directly for a guest — e.g. a counter
+// purchase that never touched the Guest portal. Picks from active bookings
+// rather than requiring a guest access code, since not every guest has one.
+function StaffOrderModal({ bookings, rooms, clientName, services, onClose, onSave }) {
+  const [bookingId, setBookingId] = useState("");
+  const [itemId, setItemId] = useState("");
+  const [qty, setQty] = useState(1);
+  const [saving, setSaving] = useState(false);
+
+  const activeBookings = bookings.filter((b) => b.status !== "completed");
+  const bookingLabel = (bk) => {
+    const room = rooms.find((r) => r.id === bk.roomId);
+    return `${clientName(bk.clientId)}${room ? " — " + room.roomNumber + " · " + room.roomType : ""}`;
+  };
+  const selectedItem = services.find((s) => s.id === itemId);
+  const hasQuantity = selectedItem && (selectedItem.category === "Kitchen" || selectedItem.category === "Laundry");
+  const canSave = bookingId && itemId;
+
+  async function handleSave() {
+    setSaving(true);
+    const booking = bookings.find((b) => b.id === bookingId);
+    const ok = await onSave(booking, selectedItem, hasQuantity ? qty : 1);
+    setSaving(false);
+    if (ok) onClose();
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(22,35,59,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
+      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(360px, 92vw)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <h3 className="fr" style={{ margin: 0, fontSize: "19px" }}>Log an order</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={18} /></button>
+        </div>
+        <p style={{ fontSize: "12px", color: C.inkSoft, margin: "0 0 16px" }}>
+          For orders taken directly at the counter or by phone — bypasses the Guest portal, shows up in Requests and the ledger below just the same.
+        </p>
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Guest / room</label>
+        <select value={bookingId} onChange={(e) => setBookingId(e.target.value)} style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px" }}>
+          <option value="">— Select a booking —</option>
+          {activeBookings.map((bk) => <option key={bk.id} value={bk.id}>{bookingLabel(bk)}</option>)}
+        </select>
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Item</label>
+        <select value={itemId} onChange={(e) => setItemId(e.target.value)} style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px" }}>
+          <option value="">— Select an item —</option>
+          {services.map((s) => <option key={s.id} value={s.id}>{s.category} — {s.name} ({s.price > 0 ? money(s.price) : "Free"})</option>)}
+        </select>
+
+        {hasQuantity && (
+          <>
+            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Quantity</label>
+            <input
+              type="number"
+              min="1"
+              value={qty}
+              onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
+              style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px", boxSizing: "border-box" }}
+            />
+          </>
+        )}
+
+        <button
+          disabled={!canSave || saving}
+          onClick={handleSave}
+          style={{
+            width: "100%", background: canSave ? C.ink : C.line, color: canSave ? "#fff" : C.inkSoft,
+            border: "none", borderRadius: "8px", padding: "11px", fontSize: "14.5px",
+            cursor: canSave && !saving ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
+            opacity: saving ? 0.7 : 1
+          }}
+        >
+          <Check size={16} /> {saving ? "Logging…" : "Log order"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
   const [role, setRole] = useState(null); // 'owner' | 'manager' | 'staff' | null while loading
@@ -596,6 +675,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
   const [showBranchMenu, setShowBranchMenu] = useState(false);
   const [showAddBooking, setShowAddBooking] = useState(false);
+  const [showLogOrder, setShowLogOrder] = useState(false);
   const [showAddClient, setShowAddClient] = useState(false);
   const [tapFlash, setTapFlash] = useState(null);
   const [generatedCode, setGeneratedCode] = useState(null);
@@ -1079,6 +1159,30 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       enqueueAction({ type: "addExpense", payload });
       setPendingCount(queueCount());
     }
+  }
+
+  // Staff logging an order on the guest's behalf (e.g. a counter purchase
+  // that never touches the Guest portal) — same shape as a guest-initiated
+  // request, just with no access code attached, so it shows up in the
+  // Requests tab and the accounting ledger the same way a guest order would.
+  async function logStaffOrder(booking, item, qty) {
+    const room = rooms.find((r) => r.id === booking.roomId);
+    const qtyLabel = qty > 1 ? ` × ${qty}` : "";
+    const priceLabel = item.price > 0 ? `TSh ${Number(item.price).toLocaleString()}` : "Free";
+    const payload = {
+      code: null,
+      guest_name: clientName(booking.clientId),
+      room_number: room ? room.roomNumber : null,
+      room_type: room ? room.roomType : null,
+      category: item.category,
+      quantity: qty,
+      amount: item.price * qty,
+      stage: "handled", // logged after the fact by staff, so it's already fulfilled
+      message: `${clientName(booking.clientId)} requested ${item.name}${qtyLabel} (${priceLabel}) — logged by staff`,
+    };
+    const { data, error } = await supabase.from("service_requests").insert(payload).select().single();
+    if (!error && data) setRequests((prev) => [data, ...prev]);
+    return !error;
   }
 
   async function updateInvoiceStatus(id, status) {
@@ -1680,6 +1784,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           )}
 
           {tab === "services" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
             <Panel title="Service catalog">
               <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
@@ -1729,6 +1834,59 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                 </div>
               </div>
             </Panel>
+
+            <Panel
+              title="Order ledger"
+              action={
+                <button
+                  onClick={() => setShowLogOrder(true)}
+                  style={{ display: "flex", alignItems: "center", gap: "6px", background: C.clay, color: "#fff", border: "none", borderRadius: "7px", padding: "8px 13px", fontSize: "13.5px", cursor: "pointer" }}
+                >
+                  <Plus size={15} /> Log an order
+                </button>
+              }
+            >
+              <p style={{ fontSize: "12.5px", color: C.inkSoft, marginTop: 0, marginBottom: "14px" }}>
+                Every chargeable order as its own line — kept per-order rather than cumulated, since different items can come from different outside providers.
+              </p>
+              {(() => {
+                const ledger = [...requests].filter((r) => r.amount != null).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+                const ledgerTotal = ledger.reduce((sum, r) => sum + (r.amount || 0), 0);
+                return ledger.length === 0 ? (
+                  <p style={{ fontSize: "13.5px", color: C.inkSoft }}>No chargeable orders yet.</p>
+                ) : (
+                  <>
+                    <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                      <thead>
+                        <tr style={{ textAlign: "left", color: C.inkSoft, fontSize: "12.5px" }}>
+                          <th style={{ paddingBottom: "10px" }}>Date</th>
+                          <th>Guest / room</th>
+                          <th>Item</th>
+                          <th>Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ledger.map((r) => (
+                          <tr key={r.id} style={{ borderTop: `1px solid ${C.line}` }}>
+                            <td style={{ padding: "10px 0" }}>{new Date(r.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}</td>
+                            <td>{r.guest_name || "—"}{r.room_number ? ` · Room ${r.room_number}` : ""}</td>
+                            <td>{r.message}</td>
+                            <td>{money(r.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "12px", paddingTop: "12px", borderTop: `1px solid ${C.line}` }}>
+                      <span style={{ fontSize: "13px", color: C.inkSoft }}>Total</span>
+                      <span className="fr" style={{ fontSize: "15px", fontWeight: 500 }}>{money(ledgerTotal)}</span>
+                    </div>
+                  </>
+                );
+              })()}
+            </Panel>
+            </div>
           )}
 
           {tab === "tags" && (
@@ -1986,6 +2144,18 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           existingBookings={bBookings}
           onClose={() => setEditingBooking(null)}
           onSave={(updates) => saveBookingEdit(editingBooking.id, updates)}
+        />
+      )}
+
+      {/* Log a staff-side order modal */}
+      {showLogOrder && (
+        <StaffOrderModal
+          bookings={bBookings}
+          rooms={bRooms}
+          clientName={clientName}
+          services={bServices.filter((s) => GUEST_REQUEST_CATEGORIES.includes(s.category))}
+          onClose={() => setShowLogOrder(false)}
+          onSave={logStaffOrder}
         />
       )}
 
@@ -2794,6 +2964,7 @@ function GuestApp({ onExit, initialCode }) {
       room_type: session.access.room_type || null,
       category: item.category,
       quantity: qty,
+      amount: item.price * qty,
       message: `${session.access.guest_name} requested ${item.name}${qtyLabel} (${priceLabel})`,
     });
     setSendingId(null);
@@ -2908,6 +3079,8 @@ function GuestApp({ onExit, initialCode }) {
   const { access } = session;
   const isExpired = Date.now() > new Date(access.expires_at).getTime();
   const expiresLabel = new Date(access.expires_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  const ordersTotal = myRequests.reduce((sum, r) => sum + (r.amount || 0), 0);
+  const grandTotal = (access.invoice_amount || 0) + ordersTotal;
 
   return (
     <div className="ws" style={{ minHeight: "560px", background: C.paper, display: "flex", justifyContent: "center", padding: "36px 20px" }}>
@@ -2933,7 +3106,7 @@ function GuestApp({ onExit, initialCode }) {
             information ("here's your stay, here's what you owe"), and splitting
             it into two headered panels was just wasted vertical space. */}
         <Panel title="Booking">
-          <div style={{ fontSize: "14px", lineHeight: 1.8 }}>
+          <div id="stay-summary-print" style={{ fontSize: "14px", lineHeight: 1.8 }}>
             {access.room_number && (
               <div style={{ marginBottom: "8px" }}>
                 <span style={{ fontSize: "12px", color: C.inkSoft }}>Your room</span>
@@ -2947,20 +3120,48 @@ function GuestApp({ onExit, initialCode }) {
             <div style={{ marginTop: "6px" }}><Pill tone={access.status}>{access.status}</Pill></div>
           </div>
 
-          <div style={{ borderTop: `1px solid ${C.line}`, marginTop: "14px", paddingTop: "14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            {access.invoice_amount != null ? (
-              <>
-                <span style={{ fontSize: "13px", color: C.inkSoft }}>Amount due</span>
+          <div style={{ borderTop: `1px solid ${C.line}`, marginTop: "14px", paddingTop: "14px" }}>
+            {access.invoice_amount != null && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                <span style={{ fontSize: "13px", color: C.inkSoft }}>Room charge</span>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span style={{ fontSize: "15px", fontWeight: 500 }}>{money(access.invoice_amount)}</span>
+                  <span style={{ fontSize: "14px" }}>{money(access.invoice_amount)}</span>
                   <Pill tone={access.invoice_status}>{access.invoice_status}</Pill>
                 </div>
-              </>
-            ) : (
+              </div>
+            )}
+            {ordersTotal > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                <span style={{ fontSize: "13px", color: C.inkSoft }}>Orders this stay</span>
+                <span style={{ fontSize: "14px" }}>{money(ordersTotal)}</span>
+              </div>
+            )}
+            {access.invoice_amount == null && ordersTotal === 0 ? (
               <span style={{ fontSize: "13.5px", color: C.inkSoft }}>No invoice on file yet.</span>
+            ) : (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px", paddingTop: "8px", borderTop: `1px solid ${C.line}` }}>
+                <span style={{ fontSize: "13px", fontWeight: 500 }}>Total</span>
+                <span className="fr" style={{ fontSize: "17px", fontWeight: 500 }}>{money(grandTotal)}</span>
+              </div>
             )}
           </div>
+          {(access.invoice_amount != null || ordersTotal > 0) && (
+            <button
+              onClick={() => window.print()}
+              className="no-print"
+              style={{ width: "100%", marginTop: "12px", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, background: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}
+            >
+              Print summary
+            </button>
+          )}
         </Panel>
+        <style>{`
+          @media print {
+            body * { visibility: hidden; }
+            #stay-summary-print, #stay-summary-print * { visibility: visible; }
+            .no-print { display: none !important; }
+          }
+        `}</style>
 
         <div style={{ height: "14px" }} />
 
