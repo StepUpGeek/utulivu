@@ -167,6 +167,37 @@ function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Builds the calendar grid for the guest's stay: one row per calendar week
+// (Sun–Sat) the stay touches, so a stay crossing a week boundary just gets
+// a second row rather than needing a different layout. Returns null if the
+// dates aren't real (TBC, missing).
+function buildStayCalendar(checkInStr, checkOutStr) {
+  if (!checkInStr || !checkOutStr || checkInStr === "TBC" || checkOutStr === "TBC") return null;
+  const checkIn = new Date(checkInStr + "T00:00:00");
+  const checkOut = new Date(checkOutStr + "T00:00:00");
+  if (isNaN(checkIn) || isNaN(checkOut)) return null;
+
+  const startOfWeek = (d) => {
+    const copy = new Date(d);
+    copy.setDate(copy.getDate() - copy.getDay());
+    return copy;
+  };
+  const gridStart = startOfWeek(checkIn);
+  const lastWeekStart = startOfWeek(checkOut);
+  const gridEnd = new Date(lastWeekStart);
+  gridEnd.setDate(gridEnd.getDate() + 6);
+
+  const days = [];
+  const cursor = new Date(gridStart);
+  while (cursor <= gridEnd) {
+    days.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const weeks = [];
+  for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7));
+  return { weeks, checkIn, checkOut };
+}
+
 // A booking counts as occupying its room on a given date if that date falls
 // within its stay AND it hasn't been marked completed yet — completed means
 // "no longer active" regardless of what the original checkout date says
@@ -235,27 +266,47 @@ function ConnectionBadge({ isOnline, usingCache, syncing, pendingCount }) {
   );
 }
 
-function Pill({ tone = "default", children }) {
-  const tones = {
-    default: { bg: C.line, fg: C.inkSoft },
-    confirmed: { bg: C.signalSoft, fg: C.clayDeep === C.clayDeep ? "#1E6E67" : C.signal },
-    pending: { bg: "#F3E7CE", fg: "#8A6A1E" },
-    paid: { bg: C.signalSoft, fg: "#1E6E67" },
-    outstanding: { bg: "#F3DEDE", fg: C.red },
-    new: { bg: "#F3E7CE", fg: "#8A6A1E" },
-    quoted: { bg: "#E4E9F3", fg: "#3A4E8A" },
-    completed: { bg: C.signalSoft, fg: "#1E6E67" },
-    cancelled: { bg: "#F3DEDE", fg: C.red },
-    void: { bg: C.line, fg: C.inkSoft },
-  };
-  const t = tones[tone] || tones.default;
+// Guest-facing weekly calendar for their stay — a grayed cell for a day
+// already passed, filled for the day/days ahead, outlined for today,
+// and nothing shown for days outside the stay. One row per week touched,
+// so a stay crossing a week boundary just gets a second row.
+function StayCalendar({ checkIn, checkOut }) {
+  const built = buildStayCalendar(checkIn, checkOut);
+  if (!built) return null;
+  const { weeks, checkIn: inDate, checkOut: outDate } = built;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
+
   return (
-    <span className="ws" style={{
-      background: t.bg, color: t.fg, fontSize: "12.5px", fontWeight: 500,
-      padding: "3px 10px", borderRadius: "999px", whiteSpace: "nowrap"
-    }}>
-      {children}
-    </span>
+    <div style={{ marginTop: "10px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px", marginBottom: "4px" }}>
+        {WEEKDAY_LABELS.map((l, i) => (
+          <div key={i} style={{ textAlign: "center", fontSize: "10.5px", color: C.inkSoft, fontWeight: 500 }}>{l}</div>
+        ))}
+      </div>
+      {weeks.map((week, wi) => (
+        <div key={wi} style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px", marginBottom: "4px" }}>
+          {week.map((day, di) => {
+            const inStay = day >= inDate && day <= outDate;
+            const isPast = inStay && day < today;
+            const isToday = day.getTime() === today.getTime();
+            return (
+              <div key={di} style={{
+                aspectRatio: "1", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: "12px", fontWeight: inStay ? 500 : 400,
+                background: !inStay ? "transparent" : isPast ? C.line : C.signal,
+                color: !inStay ? C.inkSoft : isPast ? C.inkSoft : "#fff",
+                border: isToday ? `2px solid ${C.clay}` : "1px solid transparent",
+                opacity: !inStay ? 0.35 : 1,
+              }}>
+                {day.getDate()}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -675,8 +726,11 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
   const [showBranchMenu, setShowBranchMenu] = useState(false);
   const [showAddBooking, setShowAddBooking] = useState(false);
+  const [addBookingPrefillClientId, setAddBookingPrefillClientId] = useState(null);
   const [showLogOrder, setShowLogOrder] = useState(false);
   const [showAddClient, setShowAddClient] = useState(false);
+  const [clientSearch, setClientSearch] = useState("");
+  const [viewingClientHistory, setViewingClientHistory] = useState(null);
   const [tapFlash, setTapFlash] = useState(null);
   const [generatedCode, setGeneratedCode] = useState(null);
   const [printInvoice, setPrintInvoice] = useState(null);
@@ -1013,6 +1067,23 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     if (!clientActivity[bk.clientId] || score > clientActivity[bk.clientId]) clientActivity[bk.clientId] = score;
   });
   const sortedClients = [...bClients].sort((a, b) => (clientActivity[b.id] ?? -1) - (clientActivity[a.id] ?? -1));
+
+  const searchedClients = clientSearch.trim()
+    ? sortedClients.filter((c) => {
+        const q = clientSearch.trim().toLowerCase();
+        return c.name.toLowerCase().includes(q) || (c.phone || "").toLowerCase().includes(q);
+      })
+    : sortedClients;
+
+  // Lifetime bookings count + total paid spend for a client — shown inline
+  // on their card, and behind the "View history" link for the full list.
+  function clientStats(clientId) {
+    const clientBookings = bookings.filter((b) => b.clientId === clientId);
+    const totalSpend = invoices
+      .filter((v) => v.status === "paid" && clientBookings.some((b) => b.id === v.bookingId))
+      .reduce((sum, v) => sum + v.amount, 0);
+    return { bookingCount: clientBookings.length, totalSpend, clientBookings };
+  }
 
   // Same idea for the Bookings tab itself — active bookings (pending/confirmed)
   // on top, most recent check-in first, so real current activity isn't buried
@@ -1736,8 +1807,16 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                 </button>
               }
             >
+              <input
+                value={clientSearch}
+                onChange={(e) => setClientSearch(e.target.value)}
+                placeholder="Search by name or phone…"
+                style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: `1px solid ${C.line}`, marginBottom: "14px", fontSize: "14px", boxSizing: "border-box" }}
+              />
               <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: "14px" }}>
-                {sortedClients.map((c) => (
+                {searchedClients.map((c) => {
+                  const stats = clientStats(c.id);
+                  return (
                   <div key={c.id} style={{ border: `1px solid ${C.line}`, borderRadius: "9px", padding: "14px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div>
                       <div style={{ fontWeight: 500, marginBottom: "4px" }}>{c.name}</div>
@@ -1747,6 +1826,17 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                       )}
                       {canManage && !c.idNumber && (
                         <div style={{ fontSize: "11.5px", color: C.amber, marginTop: "4px" }}>ID not on file</div>
+                      )}
+                      <div style={{ fontSize: "12px", color: C.inkSoft, marginTop: "6px" }}>
+                        {stats.bookingCount} booking{stats.bookingCount === 1 ? "" : "s"} · {money(stats.totalSpend)} spent
+                      </div>
+                      {stats.bookingCount > 0 && (
+                        <button
+                          onClick={() => setViewingClientHistory(c)}
+                          style={{ fontSize: "12px", border: "none", background: "none", color: C.clayDeep, cursor: "pointer", padding: 0, marginTop: "4px" }}
+                        >
+                          View history
+                        </button>
                       )}
                     </div>
                     {canManage && (
@@ -1758,9 +1848,11 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                       </button>
                     )}
                   </div>
-                ))}
-                {bClients.length === 0 && (
-                  <div style={{ fontSize: "13.5px", color: C.inkSoft }}>No clients yet for this branch.</div>
+                );})}
+                {searchedClients.length === 0 && (
+                  <div style={{ fontSize: "13.5px", color: C.inkSoft }}>
+                    {clientSearch.trim() ? "No clients match that search." : "No clients yet for this branch."}
+                  </div>
                 )}
               </div>
             </Panel>
@@ -1776,9 +1868,15 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                       <div key={iq.id} style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "8px", padding: "12px" }}>
                         <div style={{ fontSize: "13.5px", fontWeight: 500 }}>{clientName(iq.clientId)}</div>
                         <div style={{ fontSize: "13px", color: C.inkSoft, margin: "4px 0 8px" }}>{iq.message}</div>
-                        <div style={{ display: "flex", gap: "6px" }}>
+                        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                           <button disabled={colIdx === 0} onClick={() => moveInquiry(iq.id, -1)} style={{ fontSize: "12px", border: `1px solid ${C.line}`, background: "none", borderRadius: "5px", padding: "3px 7px", cursor: colIdx === 0 ? "default" : "pointer", opacity: colIdx === 0 ? 0.4 : 1 }}>← back</button>
                           <button disabled={colIdx === INQUIRY_STAGES.length - 1} onClick={() => moveInquiry(iq.id, 1)} style={{ fontSize: "12px", border: `1px solid ${C.line}`, background: "none", borderRadius: "5px", padding: "3px 7px", cursor: colIdx === 3 ? "default" : "pointer", opacity: colIdx === 3 ? 0.4 : 1 }}>advance →</button>
+                          <button
+                            onClick={() => { setAddBookingPrefillClientId(iq.clientId); setShowAddBooking(true); }}
+                            style={{ fontSize: "12px", border: "none", background: C.signal, color: "#fff", borderRadius: "5px", padding: "3px 8px", cursor: "pointer" }}
+                          >
+                            Convert to booking
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -2020,6 +2118,39 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         </div>
       </div>
 
+      {/* Client booking history modal */}
+      {viewingClientHistory && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(22,35,59,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
+          <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(480px, 92vw)", maxHeight: "80vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+              <h3 className="fr" style={{ margin: 0, fontSize: "19px" }}>{viewingClientHistory.name}</h3>
+              <button onClick={() => setViewingClientHistory(null)} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={18} /></button>
+            </div>
+            <p style={{ fontSize: "12.5px", color: C.inkSoft, margin: "0 0 16px" }}>{viewingClientHistory.phone}</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {clientStats(viewingClientHistory.id).clientBookings
+                .slice()
+                .sort((a, b) => new Date(b.checkIn === "TBC" ? 0 : b.checkIn) - new Date(a.checkIn === "TBC" ? 0 : a.checkIn))
+                .map((bk) => {
+                  const inv = invoices.find((v) => v.bookingId === bk.id);
+                  return (
+                    <div key={bk.id} style={{ border: `1px solid ${C.line}`, borderRadius: "8px", padding: "12px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                        <span style={{ fontSize: "13.5px", fontWeight: 500 }}>{roomLabel(bk)}</span>
+                        <Pill tone={bk.status}>{bk.status}</Pill>
+                      </div>
+                      <div style={{ fontSize: "12.5px", color: C.inkSoft }}>{formatDuration(bk.checkIn, bk.checkOut)}</div>
+                      {inv && (
+                        <div style={{ marginTop: "6px" }}>{invoiceControl(inv)}</div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Printable invoice modal */}
       {printInvoice && (
         <InvoicePrintModal
@@ -2042,7 +2173,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           rooms={bRooms}
           roomRates={roomRates}
           existingBookings={bBookings}
-          onClose={() => setShowAddBooking(false)}
+          initialClientId={addBookingPrefillClientId}
+          onClose={() => { setShowAddBooking(false); setAddBookingPrefillClientId(null); }}
           onAddClient={async (newClient) => {
             const id = newId();
             const payload = { id, branch_id: branchId, name: newClient.name, phone: newClient.phone, id_type: newClient.idType || null, id_number: newClient.idNumber || null };
@@ -2112,6 +2244,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
               // same fallback mentioned above).
             }
             setShowAddBooking(false);
+            setAddBookingPrefillClientId(null);
             return true;
           }}
         />
@@ -2372,9 +2505,10 @@ function EditBookingModal({ booking, clients, services, rooms, roomRates, existi
   );
 }
 
-function AddBookingModal({ clients, services, rooms, roomRates, existingBookings, onClose, onSave, onAddClient }) {
-  const [clientQuery, setClientQuery] = useState("");
-  const [phone, setPhone] = useState("");
+function AddBookingModal({ clients, services, rooms, roomRates, existingBookings, onClose, onSave, onAddClient, initialClientId }) {
+  const initialClient = initialClientId ? clients.find((c) => c.id === initialClientId) : null;
+  const [clientQuery, setClientQuery] = useState(initialClient ? initialClient.name : "");
+  const [phone, setPhone] = useState(initialClient && initialClient.phone !== "—" ? initialClient.phone : "");
   const [showIdFields, setShowIdFields] = useState(false);
   const [idType, setIdType] = useState("");
   const [idNumber, setIdNumber] = useState("");
@@ -3122,6 +3256,7 @@ function GuestApp({ onExit, initialCode }) {
             )}
             <div><strong>{access.service_names}</strong></div>
             <div style={{ color: C.inkSoft }}>{access.check_in} → {access.check_out}</div>
+            <StayCalendar checkIn={access.check_in} checkOut={access.check_out} />
             <div style={{ marginTop: "6px" }}><Pill tone={access.status}>{access.status}</Pill></div>
           </div>
 
