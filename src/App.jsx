@@ -359,6 +359,40 @@ function InvoiceStatusPicker({ value, onChange, options = INVOICE_STATUSES }) {
   );
 }
 
+const PILL_TONES = {
+  pending: { bg: "#F3E7CE", fg: "#8A6A1E" },
+  confirmed: { bg: C.signalSoft, fg: "#1E6E67" },
+  completed: { bg: "#E4E9F3", fg: "#3A4E8A" },
+  cancelled: { bg: "#F3DEDE", fg: C.red },
+  outstanding: { bg: "#F3DEDE", fg: C.red },
+  paid: { bg: C.signalSoft, fg: "#1E6E67" },
+  void: { bg: C.line, fg: C.inkSoft },
+  new: { bg: "#E4E9F3", fg: "#3A4E8A" },
+  quoted: { bg: "#F3E7CE", fg: "#8A6A1E" },
+  default: { bg: C.line, fg: C.inkSoft },
+};
+
+function Pill({ tone, children }) {
+  const t = PILL_TONES[tone] || PILL_TONES.default;
+  return (
+    <span
+      className="ws"
+      style={{
+        background: t.bg,
+        color: t.fg,
+        fontSize: "12px",
+        fontWeight: 500,
+        padding: "3px 10px",
+        borderRadius: "999px",
+        whiteSpace: "nowrap",
+        textTransform: "capitalize",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
 function NavItem({ icon: Icon, label, active, onClick, badge }) {
   return (
     <button
