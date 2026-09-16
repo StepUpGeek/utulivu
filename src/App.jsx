@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { saveCache, loadCache, getQueue, enqueueAction, removeFromQueue, queueCount } from "./offlineStore";
 import {
   LayoutGrid, CalendarDays, Users, MessageSquareText, Wrench,
-  Radio, Wallet, Building2, ChevronDown, Plus, X, Check, Bell, Menu, Shield
+  Radio, Wallet, Building2, ChevronDown, Plus, X, Check, Bell, Menu, Shield,
+  Bed, BedSingle, BedDouble, Sparkles, Crown
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -101,18 +102,23 @@ function nightsBetween(checkIn, checkOut) {
   return diff > 0 ? diff : 1;
 }
 
-// "Sep 10 → Sep 12 (2 nights)" — no year (day-to-day staff work doesn't need
-// it, and dropping it shortens the column), with the night count spelled out
-// instead of making someone do the date math themselves.
+// "10/09-12/09 (2 nights)" — day/month numerals on both ends (no year: day-to-day
+// staff work doesn't need it, and dropping it shortens the column), with the night
+// count spelled out instead of making someone do the date math themselves.
 function formatDuration(checkIn, checkOut) {
-  const short = (d) => new Date(d).toLocaleDateString([], { month: "short", day: "numeric" });
+  const short = (d) => {
+    const dt = new Date(d);
+    const dd = String(dt.getDate()).padStart(2, "0");
+    const mm = String(dt.getMonth() + 1).padStart(2, "0");
+    return `${dd}/${mm}`;
+  };
   const inLabel = checkIn && checkIn !== "TBC" ? short(checkIn) : (checkIn || "TBC");
   const outLabel = checkOut && checkOut !== "TBC" ? short(checkOut) : (checkOut || "TBC");
   if (!checkIn || !checkOut || checkIn === "TBC" || checkOut === "TBC") {
-    return `${inLabel} → ${outLabel}`;
+    return `${inLabel}-${outLabel}`;
   }
   const nights = nightsBetween(checkIn, checkOut);
-  return `${inLabel} → ${outLabel} (${nights} night${nights === 1 ? "" : "s"})`;
+  return `${inLabel}-${outLabel} (${nights} night${nights === 1 ? "" : "s"})`;
 }
 
 // A room is unavailable for a proposed stay if it overlaps an existing,
@@ -393,6 +399,42 @@ function Pill({ tone, children }) {
   );
 }
 
+/* Room types are shown as an icon plus the room number rather than spelled out —
+   the grid reads faster and the Room column stops eating horizontal space. The
+   type name still travels with it as a tooltip so nothing is lost for a new
+   staff member who hasn't learned the icons yet. Matching is substring-based so
+   "Deluxe Double" or "Standard Single" still land on the right icon. */
+const ROOM_TYPE_ICONS = [
+  { match: "presidential", icon: Crown },
+  { match: "deluxe", icon: Sparkles },
+  { match: "suite", icon: Sparkles },
+  { match: "double", icon: BedDouble },
+  { match: "twin", icon: BedDouble },
+  { match: "single", icon: BedSingle },
+];
+
+function roomTypeIcon(roomType) {
+  const t = (roomType || "").toLowerCase();
+  const hit = ROOM_TYPE_ICONS.find((r) => t.includes(r.match));
+  return hit ? hit.icon : Bed;
+}
+
+function RoomBadge({ room, fallback, size = 15 }) {
+  if (!room) {
+    return <span style={{ fontSize: "13.5px", color: C.inkSoft }}>{fallback || "—"}</span>;
+  }
+  const Icon = roomTypeIcon(room.roomType);
+  return (
+    <span
+      title={room.roomType}
+      style={{ display: "inline-flex", alignItems: "center", gap: "6px", whiteSpace: "nowrap" }}
+    >
+      <Icon size={size} strokeWidth={2} color={C.clay} />
+      <span style={{ fontWeight: 500 }}>{room.roomNumber}</span>
+    </span>
+  );
+}
+
 function NavItem({ icon: Icon, label, active, onClick, badge }) {
   return (
     <button
@@ -556,9 +598,8 @@ function RoomGrid({ rooms, bookings, clientName, canManage }) {
             border: `1px solid ${C.line}`, borderRadius: "8px",
             background: occupied ? C.signalSoft : C.paperRaised
           }}>
-            <div style={{ width: "88px", flexShrink: 0 }}>
-              <div style={{ fontWeight: 500, fontSize: "13.5px" }}>{room.roomNumber}</div>
-              <div style={{ fontSize: "11.5px", color: C.inkSoft }}>{room.roomType}</div>
+            <div style={{ width: "88px", flexShrink: 0, fontSize: "13.5px" }}>
+              <RoomBadge room={room} size={16} />
             </div>
             <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: "6px" }}>
               {occupied ? todaysBookings.map((b) => (
@@ -1477,7 +1518,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   ];
 
   return (
-    <div className="ws" style={{ display: "flex", minHeight: "640px", background: C.paper, color: C.ink, position: "relative", overflowX: "hidden" }}>
+    <div className="ws" style={{ display: "flex", height: "100vh", background: C.paper, color: C.ink, position: "relative", overflowX: "hidden", overflowY: "hidden" }}>
       {FONTS}
 
       {/* Backdrop for the mobile sidebar drawer */}
@@ -1488,9 +1529,10 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         />
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar — stays put while only the content column scrolls, so the
+          menu is always one click away without scrolling back up. */}
       <div style={{
-        width: "220px", background: C.ink, padding: "20px 14px", display: "flex", flexDirection: "column", flexShrink: 0,
+        width: "220px", background: C.ink, padding: "20px 14px", display: "flex", flexDirection: "column", flexShrink: 0, overflowY: "auto",
         ...(isMobile
           ? {
               position: "fixed", top: 0, bottom: 0, left: 0, zIndex: 16,
@@ -1531,7 +1573,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         {/* Top bar */}
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px",
-          padding: isMobile ? "14px 16px" : "16px 28px", borderBottom: `1px solid ${C.line}`, position: "relative"
+          padding: isMobile ? "14px 16px" : "16px 28px", borderBottom: `1px solid ${C.line}`, position: "relative", flexShrink: 0
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
             {isMobile && (
@@ -1792,7 +1834,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                     return (
                     <tr key={bk.id} style={{ borderTop: `1px solid ${C.line}` }}>
                       <td style={{ padding: "10px 0" }}>{clientName(bk.clientId)}</td>
-                      <td>{roomLabel(bk)}</td>
+                      <td><RoomBadge room={rooms.find((r) => r.id === bk.roomId)} fallback={bk.roomNumber} /></td>
                       <td>{serviceNames(bk.serviceIds)}</td>
                       <td>{formatDuration(bk.checkIn, bk.checkOut)}</td>
                       <td><StatusPicker value={bk.status} onChange={(s) => updateBookingStatus(bk.id, s)} /></td>
@@ -2170,7 +2212,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                   return (
                     <div key={bk.id} style={{ border: `1px solid ${C.line}`, borderRadius: "8px", padding: "12px" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                        <span style={{ fontSize: "13.5px", fontWeight: 500 }}>{roomLabel(bk)}</span>
+                        <span style={{ fontSize: "13.5px" }}><RoomBadge room={rooms.find((r) => r.id === bk.roomId)} fallback={bk.roomNumber} /></span>
                         <Pill tone={bk.status}>{bk.status}</Pill>
                       </div>
                       <div style={{ fontSize: "12.5px", color: C.inkSoft }}>{formatDuration(bk.checkIn, bk.checkOut)}</div>
@@ -2353,6 +2395,7 @@ function AddClientModal({ onClose, onSave }) {
   const [idType, setIdType] = useState("");
   const [idNumber, setIdNumber] = useState("");
   const [saving, setSaving] = useState(false);
+  const idNumberRef = useRef(null);
 
   async function handleSave() {
     setSaving(true);
@@ -2390,7 +2433,10 @@ function AddClientModal({ onClose, onSave }) {
         <label style={{ fontSize: "12.5px", color: C.inkSoft }}>ID type (optional)</label>
         <select
           value={idType}
-          onChange={(e) => setIdType(e.target.value)}
+          onChange={(e) => {
+            setIdType(e.target.value);
+            if (e.target.value) setTimeout(() => idNumberRef.current?.focus(), 0);
+          }}
           style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px", boxSizing: "border-box" }}
         >
           <option value="">— Not recorded —</option>
@@ -2399,9 +2445,10 @@ function AddClientModal({ onClose, onSave }) {
 
         <label style={{ fontSize: "12.5px", color: C.inkSoft }}>ID number</label>
         <input
+          ref={idNumberRef}
           value={idNumber}
           onChange={(e) => setIdNumber(e.target.value)}
-          placeholder="As shown on the ID"
+          placeholder={idType ? `${idType} number` : "As shown on the ID"}
           style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 18px", fontSize: "14px", boxSizing: "border-box" }}
         />
 
@@ -2499,7 +2546,7 @@ function EditBookingModal({ booking, clients, services, rooms, roomRates, existi
             <input type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
           </div>
         </div>
-        <div style={{ display: "flex", gap: "10px", marginBottom: checkIn && checkOut && checkIn === checkOut ? "6px" : "18px" }}>
+        <div style={{ display: "flex", gap: "10px", marginBottom: "14px" }}>
           <div style={{ flex: 1 }}>
             <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-in time (optional)</label>
             <input type="time" value={checkInTime} onChange={(e) => setCheckInTime(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
@@ -2509,11 +2556,8 @@ function EditBookingModal({ booking, clients, services, rooms, roomRates, existi
             <input type="time" value={checkOutTime} onChange={(e) => setCheckOutTime(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
           </div>
         </div>
-        <p style={{ fontSize: "11px", color: C.inkSoft, margin: "-12px 0 14px" }}>
-          Times show up on the room grid on the Dashboard — helpful when a room turns over more than once in a day, but not required.
-        </p>
         {checkIn && checkOut && checkIn === checkOut && (
-          <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 6px" }}>
+          <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 12px" }}>
             Same-day check-in/check-out leaves the room vacant that night, so it won't block another booking.
           </p>
         )}
@@ -2553,6 +2597,7 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
   const [checkInTime, setCheckInTime] = useState("");
   const [checkOutTime, setCheckOutTime] = useState("");
   const [saving, setSaving] = useState(false);
+  const idNumberRef = useRef(null);
 
   const matchedClient = clients.find((c) => c.name.trim().toLowerCase() === clientQuery.trim().toLowerCase());
   const selectedRoom = rooms.find((r) => r.id === roomId);
@@ -2653,19 +2698,22 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
                 </div>
                 <select
                   value={idType}
-                  onChange={(e) => setIdType(e.target.value)}
+                  onChange={(e) => {
+                    setIdType(e.target.value);
+                    if (e.target.value) setTimeout(() => idNumberRef.current?.focus(), 0);
+                  }}
                   style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginBottom: "8px", fontSize: "13.5px", boxSizing: "border-box" }}
                 >
                   <option value="">— ID type —</option>
                   {ID_TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
                 <input
+                  ref={idNumberRef}
                   value={idNumber}
                   onChange={(e) => setIdNumber(e.target.value)}
-                  placeholder="ID number"
+                  placeholder={idType ? `${idType} number` : "ID number"}
                   style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13.5px", boxSizing: "border-box" }}
                 />
-                <p style={{ fontSize: "11px", color: C.inkSoft, margin: "8px 0 0" }}>Only the owner will see this afterward.</p>
               </div>
             )}
           </div>
@@ -2715,7 +2763,7 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
             <input type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
           </div>
         </div>
-        <div style={{ display: "flex", gap: "10px", marginBottom: "6px" }}>
+        <div style={{ display: "flex", gap: "10px", marginBottom: "18px" }}>
           <div style={{ flex: 1 }}>
             <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-in time (optional)</label>
             <input type="time" value={checkInTime} onChange={(e) => setCheckInTime(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
@@ -2725,9 +2773,6 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
             <input type="time" value={checkOutTime} onChange={(e) => setCheckOutTime(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
           </div>
         </div>
-        <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 18px" }}>
-          Times show up on the room grid on the Dashboard — helpful when a room turns over more than once in a day, but not required.
-        </p>
         {checkIn && checkOut && checkIn === checkOut && (
           <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 18px" }}>
             Same-day check-in/check-out leaves the room vacant that night, so it won't block another booking.
@@ -2865,7 +2910,37 @@ function InvoicePrintModal({ data, branch, clientName, serviceNames, services, r
 
 function GeneratedCodeModal({ entry, onClose, onOpenGuest }) {
   const [copied, setCopied] = useState(false);
+  const [qrUrl, setQrUrl] = useState(null);
+  const [qrFailed, setQrFailed] = useState(false);
   const expiresLabel = new Date(entry.expires_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+
+  // The QR points at this same app with ?code= attached, so a guest scanning it
+  // lands straight in their stay instead of retyping the code (see App() below,
+  // which reads that parameter on load). Encoded against wherever the app is
+  // actually served from, so it works the same in dev and in production.
+  const guestLink = (() => {
+    try {
+      return `${window.location.origin}${window.location.pathname}?code=${encodeURIComponent(entry.code)}`;
+    } catch (e) {
+      return entry.code;
+    }
+  })();
+
+  // Loaded on demand rather than imported at the top: if the `qrcode` package
+  // isn't installed the modal still works, it just shows the code without the
+  // square instead of failing the whole build.
+  useEffect(() => {
+    let cancelled = false;
+    import("qrcode")
+      .then((mod) => (mod.default || mod).toDataURL(guestLink, {
+        width: 240,
+        margin: 1,
+        color: { dark: "#16233B", light: "#FFFFFF" },
+      }))
+      .then((url) => { if (!cancelled) setQrUrl(url); })
+      .catch(() => { if (!cancelled) setQrFailed(true); });
+    return () => { cancelled = true; };
+  }, [guestLink]);
 
   function copy() {
     try {
@@ -2885,7 +2960,25 @@ function GeneratedCodeModal({ entry, onClose, onOpenGuest }) {
       <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "28px", width: "min(340px, 92vw)", textAlign: "center" }}>
         <div style={{ fontSize: "12.5px", color: C.inkSoft, marginBottom: "8px" }}>Guest access code</div>
         <div className="fr" style={{ fontSize: "32px", fontWeight: 500, letterSpacing: "1px", marginBottom: "6px", color: C.ink }}>{entry.code}</div>
-        <div style={{ fontSize: "12.5px", color: C.inkSoft, marginBottom: "22px" }}>Valid until {expiresLabel}</div>
+        <div style={{ fontSize: "12.5px", color: C.inkSoft, marginBottom: "16px" }}>Valid until {expiresLabel}</div>
+
+        {qrUrl && (
+          <div style={{ marginBottom: "16px" }}>
+            <img
+              src={qrUrl}
+              alt={`QR code opening the guest portal for ${entry.code}`}
+              style={{ width: "180px", height: "180px", borderRadius: "8px", border: `1px solid ${C.line}` }}
+            />
+            <div style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "8px" }}>
+              Scanning this opens the stay directly — no code to type.
+            </div>
+          </div>
+        )}
+        {qrFailed && (
+          <div style={{ fontSize: "11.5px", color: C.inkSoft, marginBottom: "16px" }}>
+            QR unavailable — share the code above instead.
+          </div>
+        )}
         <button onClick={copy} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: `1px solid ${C.line}`, background: "none", fontSize: "13.5px", cursor: "pointer", marginBottom: "8px" }}>
           {copied ? "Copied!" : "Copy code"}
         </button>
@@ -3195,12 +3288,6 @@ function GuestApp({ onExit, initialCode }) {
       if (!opts.silent) setError("That access code wasn't recognized. Check the code from your booking confirmation.");
       return;
     }
-    const expired = Date.now() > new Date(data.expires_at).getTime();
-    if (expired && opts.silent) {
-      // Don't silently resurrect an expired stay — send them to the entry screen instead.
-      try { localStorage.removeItem(GUEST_CODE_KEY); } catch (e) {}
-      return;
-    }
     try { localStorage.setItem(GUEST_CODE_KEY, data.code); } catch (e) {}
     setSession({ access: data });
   }
@@ -3224,9 +3311,9 @@ function GuestApp({ onExit, initialCode }) {
           <div style={{ width: "40px", height: "40px", borderRadius: "9px", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "20px" }}>
             <Radio size={19} color={C.signal} />
           </div>
-          <h1 className="fr" style={{ margin: "0 0 6px", fontSize: "23px", fontWeight: 500 }}>Your stay</h1>
-          <p style={{ margin: "0 0 22px", fontSize: "13.5px", color: C.inkSoft }}>
-            Enter the access code from your booking confirmation or from a tap at the property.
+          <h1 className="fr" style={{ margin: "0 0 6px", fontSize: "23px", fontWeight: 500 }}>Welcome to Utulivu</h1>
+          <p style={{ margin: "0 0 22px", fontSize: "13.5px", color: C.inkSoft, lineHeight: 1.55 }}>
+            Your room, your requests and your bill, all in one place. Enter the access code from your booking confirmation to open your stay.
           </p>
           <input
             value={codeInput}
@@ -3238,7 +3325,9 @@ function GuestApp({ onExit, initialCode }) {
           <button onClick={enter} disabled={loading} style={{ width: "100%", padding: "11px", borderRadius: "8px", border: "none", background: C.ink, color: "#fff", fontSize: "14.5px", fontWeight: 500, cursor: loading ? "default" : "pointer", opacity: loading ? 0.7 : 1 }}>
             {loading ? "Checking…" : "Access my stay"}
           </button>
-          <p style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "12px" }}>Try: UTU-2201, UTU-5560, or UTU-0099 (expired demo) — or generate a fresh one from the Provider portal's Bookings tab.</p>
+          <p style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "12px" }}>
+            Lost your code? The front desk can send you a new one.
+          </p>
           {onExit && (
             <button onClick={onExit} style={{ width: "100%", marginTop: "10px", padding: "9px", borderRadius: "8px", border: `1px solid ${C.line}`, background: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
               ← Choose a different portal
@@ -3254,13 +3343,29 @@ function GuestApp({ onExit, initialCode }) {
   const expiresLabel = new Date(access.expires_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
   const ordersTotal = myRequests.reduce((sum, r) => sum + (r.amount || 0), 0);
   const grandTotal = (access.invoice_amount || 0) + ordersTotal;
+  // First name only — warm without guessing at a title the booking never recorded.
+  const guestFirstName = (access.guest_name || "").trim().split(" ")[0] || "there";
+
+  // Requests are stored with a human sentence ("Halima requested Chai × 2 (TSh 1,000)")
+  // because that's what reads well in the staff feed. On a bill it just needs the
+  // item, so the name prefix and the trailing price are stripped back off — the
+  // amount is already its own column here.
+  const chargeableRequests = myRequests.filter((r) => (r.amount || 0) > 0);
+  const requestLabel = (r) => {
+    const stripped = (r.message || "")
+      .replace(/^.*?\brequested\s+/i, "")
+      .replace(/\s*\(TSh[^)]*\)\s*$/i, "")
+      .replace(/\s*—\s*logged by staff\s*$/i, "")
+      .trim();
+    return stripped || r.category || "Request";
+  };
 
   return (
     <div className="ws" style={{ minHeight: "560px", background: C.paper, display: "flex", justifyContent: "center", padding: "36px 20px" }}>
       {FONTS}
       <div style={{ width: "min(420px, 100%)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
-          <h1 className="fr" style={{ margin: 0, fontSize: "22px", fontWeight: 500 }}>Your stay</h1>
+          <h1 className="fr" style={{ margin: 0, fontSize: "22px", fontWeight: 500 }}>Welcome back, {guestFirstName}</h1>
           <span style={{
             fontSize: "12.5px", fontWeight: 500, padding: "3px 10px", borderRadius: "999px",
             background: isExpired ? "#F3DEDE" : C.signalSoft, color: isExpired ? C.red : "#1E6E67"
@@ -3271,13 +3376,14 @@ function GuestApp({ onExit, initialCode }) {
 
         {isExpired && (
           <div style={{ background: "#F3DEDE", border: "1px solid #E9C7C7", borderRadius: "9px", padding: "12px 14px", marginBottom: "16px", fontSize: "13px", color: C.red }}>
-            This access code expired on {expiresLabel} — one hour after checkout. Contact the front desk if you still need help.
+            This access code expired on {expiresLabel} — one hour after checkout. Your stay details stay visible, but new orders and messages are closed. Contact the front desk if you still need help.
           </div>
         )}
 
-        {/* Booking and Invoice merged into one panel — it's really one piece of
-            information ("here's your stay, here's what you owe"), and splitting
-            it into two headered panels was just wasted vertical space. */}
+        {/* Booking, invoice and request status in one panel — it's really one
+            piece of information ("here's your stay, here's what you owe, here's
+            what you've asked for"), and splitting it across headered panels was
+            just wasted vertical space. */}
         <Panel title="Booking">
           <div id="stay-summary-print" style={{ fontSize: "14px", lineHeight: 1.8 }}>
             {access.room_number && (
@@ -3292,33 +3398,113 @@ function GuestApp({ onExit, initialCode }) {
             <div style={{ color: C.inkSoft }}>{access.check_in} → {access.check_out}</div>
             <StayCalendar checkIn={access.check_in} checkOut={access.check_out} />
             <div style={{ marginTop: "6px" }}><Pill tone={access.status}>{access.status}</Pill></div>
+
+            {/* Accommodation and everything ordered during the stay are listed
+                separately and only summed at the very bottom — a guest checking
+                their bill wants to see what each line was before they're asked
+                to accept a single number. This sits inside the printable area so
+                a printed summary is a real bill, not just the dates. */}
+            <div style={{ borderTop: `1px solid ${C.line}`, marginTop: "14px", paddingTop: "14px" }}>
+              {access.invoice_amount == null && chargeableRequests.length === 0 ? (
+                <span style={{ fontSize: "13.5px", color: C.inkSoft }}>No charges on file yet.</span>
+              ) : (
+                <>
+                  {access.invoice_amount != null && (
+                    <>
+                      <div style={{ fontSize: "12px", color: C.inkSoft, marginBottom: "6px" }}>Accommodation</div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
+                        <span style={{ fontSize: "13.5px" }}>
+                          Room {access.room_number || "—"}{access.room_type ? ` · ${access.room_type}` : ""}
+                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                          <span style={{ fontSize: "13.5px" }}>{money(access.invoice_amount)}</span>
+                          <Pill tone={access.invoice_status}>{access.invoice_status}</Pill>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {chargeableRequests.length > 0 && (
+                    <div style={{ marginTop: access.invoice_amount != null ? "14px" : 0 }}>
+                      <div style={{ fontSize: "12px", color: C.inkSoft, marginBottom: "6px" }}>Orders &amp; services</div>
+                      {chargeableRequests.map((r) => (
+                        <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "10px", marginBottom: "4px" }}>
+                          <span style={{ fontSize: "13.5px" }}>{requestLabel(r)}</span>
+                          <span style={{ fontSize: "13.5px", flexShrink: 0 }}>{money(r.amount)}</span>
+                        </div>
+                      ))}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "6px", paddingTop: "6px", borderTop: `1px dashed ${C.line}` }}>
+                        <span style={{ fontSize: "12.5px", color: C.inkSoft }}>Orders subtotal</span>
+                        <span style={{ fontSize: "13.5px" }}>{money(ordersTotal)}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "12px", paddingTop: "10px", borderTop: `2px solid ${C.ink}` }}>
+                    <span style={{ fontSize: "13px", fontWeight: 500 }}>Grand total</span>
+                    <span className="fr" style={{ fontSize: "19px", fontWeight: 500 }}>{money(grandTotal)}</span>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
-          <div style={{ borderTop: `1px solid ${C.line}`, marginTop: "14px", paddingTop: "14px" }}>
-            {access.invoice_amount != null && (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                <span style={{ fontSize: "13px", color: C.inkSoft }}>Room charge</span>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span style={{ fontSize: "14px" }}>{money(access.invoice_amount)}</span>
-                  <Pill tone={access.invoice_status}>{access.invoice_status}</Pill>
-                </div>
+          {myRequests.length > 0 && (
+            <div style={{ borderTop: `1px solid ${C.line}`, marginTop: "14px", paddingTop: "14px" }}>
+              <div style={{ fontSize: "13px", fontWeight: 500, color: C.ink, marginBottom: "10px" }}>Your requests</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {myRequests.map((r) => {
+                  const isRich = RICH_STAGE_CATEGORIES.includes(r.category);
+                  const stage = r.stage || "sent";
+                  return (
+                    <div key={r.id} style={{ border: `1px solid ${C.line}`, borderRadius: "8px", padding: "12px" }}>
+                      <div style={{ fontSize: "13.5px", fontWeight: 500 }}>
+                        {r.message}{r.quantity > 1 ? ` (× ${r.quantity})` : ""}
+                      </div>
+                      {isRich ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "8px", flexWrap: "wrap" }}>
+                          {RICH_STAGES.map((s, i) => {
+                            const reached = RICH_STAGES.indexOf(stage) >= i;
+                            return (
+                              <span key={s} style={{
+                                fontSize: "11px", fontWeight: 500, padding: "3px 9px", borderRadius: "999px",
+                                background: reached ? C.signalSoft : C.line, color: reached ? "#1E6E67" : C.inkSoft
+                              }}>
+                                {RICH_STAGE_LABELS[s]}
+                              </span>
+                            );
+                          })}
+                          {stage === "delivered" && (
+                            <button
+                              disabled={confirmingId === r.id || isExpired}
+                              onClick={() => confirmRequest(r)}
+                              style={{ fontSize: "12px", border: "none", background: isExpired ? C.line : C.signal, color: isExpired ? C.inkSoft : "#fff", borderRadius: "6px", padding: "5px 11px", cursor: isExpired ? "default" : "pointer", marginLeft: "auto" }}
+                            >
+                              {confirmingId === r.id ? "Confirming…" : "Confirm received"}
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "8px" }}>
+                          <span style={{ fontSize: "11.5px", color: C.inkSoft }}>{SIMPLE_STAGE_LABELS[stage] || stage}</span>
+                          {stage === "handled" && (
+                            <button
+                              disabled={confirmingId === r.id || isExpired}
+                              onClick={() => confirmRequest(r)}
+                              style={{ fontSize: "12px", border: "none", background: isExpired ? C.line : C.signal, color: isExpired ? C.inkSoft : "#fff", borderRadius: "6px", padding: "5px 11px", cursor: isExpired ? "default" : "pointer" }}
+                            >
+                              {confirmingId === r.id ? "Confirming…" : "Mark as received"}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            )}
-            {ordersTotal > 0 && (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                <span style={{ fontSize: "13px", color: C.inkSoft }}>Orders this stay</span>
-                <span style={{ fontSize: "14px" }}>{money(ordersTotal)}</span>
-              </div>
-            )}
-            {access.invoice_amount == null && ordersTotal === 0 ? (
-              <span style={{ fontSize: "13.5px", color: C.inkSoft }}>No invoice on file yet.</span>
-            ) : (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px", paddingTop: "8px", borderTop: `1px solid ${C.line}` }}>
-                <span style={{ fontSize: "13px", fontWeight: 500 }}>Total</span>
-                <span className="fr" style={{ fontSize: "17px", fontWeight: 500 }}>{money(grandTotal)}</span>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
+
           {(access.invoice_amount != null || ordersTotal > 0) && (
             <button
               onClick={() => window.print()}
@@ -3410,66 +3596,36 @@ function GuestApp({ onExit, initialCode }) {
           </>
         )}
 
-        {myRequests.length > 0 && (
-          <>
-            <Panel title="Your requests">
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {myRequests.map((r) => {
-                  const isRich = RICH_STAGE_CATEGORIES.includes(r.category);
-                  const stage = r.stage || "sent";
-                  return (
-                    <div key={r.id} style={{ border: `1px solid ${C.line}`, borderRadius: "8px", padding: "12px" }}>
-                      <div style={{ fontSize: "13.5px", fontWeight: 500 }}>
-                        {r.message}{r.quantity > 1 ? ` (× ${r.quantity})` : ""}
-                      </div>
-                      {isRich ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "8px", flexWrap: "wrap" }}>
-                          {RICH_STAGES.map((s, i) => {
-                            const reached = RICH_STAGES.indexOf(stage) >= i;
-                            return (
-                              <span key={s} style={{
-                                fontSize: "11px", fontWeight: 500, padding: "3px 9px", borderRadius: "999px",
-                                background: reached ? C.signalSoft : C.line, color: reached ? "#1E6E67" : C.inkSoft
-                              }}>
-                                {RICH_STAGE_LABELS[s]}
-                              </span>
-                            );
-                          })}
-                          {stage === "delivered" && (
-                            <button
-                              disabled={confirmingId === r.id}
-                              onClick={() => confirmRequest(r)}
-                              style={{ fontSize: "12px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "5px 11px", cursor: "pointer", marginLeft: "auto" }}
-                            >
-                              {confirmingId === r.id ? "Confirming…" : "Confirm received"}
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "8px" }}>
-                          <span style={{ fontSize: "11.5px", color: C.inkSoft }}>{SIMPLE_STAGE_LABELS[stage] || stage}</span>
-                          {stage === "handled" && (
-                            <button
-                              disabled={confirmingId === r.id}
-                              onClick={() => confirmRequest(r)}
-                              style={{ fontSize: "12px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "5px 11px", cursor: "pointer" }}
-                            >
-                              {confirmingId === r.id ? "Confirming…" : "Mark as received"}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </Panel>
-            <div style={{ height: "14px" }} />
-          </>
-        )}
-
-        <Panel title="Need something?">
+        <Panel title="Front desk">
           <div style={{ marginBottom: "16px", paddingBottom: "16px", borderBottom: `1px solid ${C.line}` }}>
+            <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px", color: C.ink }}>Message the front desk</p>
+            <textarea
+              value={customMessage}
+              onChange={(e) => setCustomMessage(e.target.value)}
+              placeholder="Type anything you need — this goes straight to the front desk."
+              disabled={isExpired || customSending}
+              rows={3}
+              style={{ width: "100%", padding: "9px 10px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13.5px", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px" }}>
+              {customSent ? (
+                <span style={{ fontSize: "12.5px", color: "#1E6E67" }}>Sent — the front desk has been notified.</span>
+              ) : <span />}
+              <button
+                disabled={isExpired || customSending || !customMessage.trim()}
+                onClick={sendCustomMessage}
+                style={{
+                  padding: "9px 16px", borderRadius: "7px", border: "none", fontSize: "13.5px",
+                  background: isExpired || !customMessage.trim() ? C.line : C.signal, color: isExpired || !customMessage.trim() ? C.inkSoft : "#fff",
+                  cursor: isExpired || !customMessage.trim() ? "default" : "pointer", opacity: customSending ? 0.7 : 1
+                }}
+              >
+                {customSending ? "Sending…" : "Send"}
+              </button>
+            </div>
+          </div>
+
+          <div>
             <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px", color: C.ink }}>Airtime top-up</p>
             {airtimeSent ? (
               <p style={{ fontSize: "13.5px", color: "#1E6E67", margin: 0 }}>Request sent — {airtimeNetwork}, TSh {Number(airtimeAmount).toLocaleString()} to {airtimePhone}. Front desk notified.</p>
@@ -3536,34 +3692,6 @@ function GuestApp({ onExit, initialCode }) {
                 </p>
               </div>
             )}
-          </div>
-
-          <div>
-            <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px", color: C.ink }}>Message the front desk</p>
-            <textarea
-              value={customMessage}
-              onChange={(e) => setCustomMessage(e.target.value)}
-              placeholder="Type anything you need — this goes straight to the front desk."
-              disabled={isExpired || customSending}
-              rows={3}
-              style={{ width: "100%", padding: "9px 10px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13.5px", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }}
-            />
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px" }}>
-              {customSent ? (
-                <span style={{ fontSize: "12.5px", color: "#1E6E67" }}>Sent — the front desk has been notified.</span>
-              ) : <span />}
-              <button
-                disabled={isExpired || customSending || !customMessage.trim()}
-                onClick={sendCustomMessage}
-                style={{
-                  padding: "9px 16px", borderRadius: "7px", border: "none", fontSize: "13.5px",
-                  background: isExpired || !customMessage.trim() ? C.line : C.signal, color: isExpired || !customMessage.trim() ? C.inkSoft : "#fff",
-                  cursor: isExpired || !customMessage.trim() ? "default" : "pointer", opacity: customSending ? 0.7 : 1
-                }}
-              >
-                {customSending ? "Sending…" : "Send"}
-              </button>
-            </div>
           </div>
         </Panel>
 
@@ -3635,9 +3763,19 @@ function PortalGate({ onSelect, onReset }) {
 /* ---------------------------------------------------------
    Top-level router
 --------------------------------------------------------- */
+// A scanned QR arrives as ?code=UTU-1234 — that's enough to know which portal
+// the person wants and which stay to open, so both are read once on load.
+function codeFromUrl() {
+  try {
+    return new URLSearchParams(window.location.search).get("code") || "";
+  } catch (e) {
+    return "";
+  }
+}
+
 export default function App() {
-  const [portal, setPortal] = useState(null);
-  const [prefillGuestCode, setPrefillGuestCode] = useState("");
+  const [portal, setPortal] = useState(() => (codeFromUrl() ? "guest" : null));
+  const [prefillGuestCode, setPrefillGuestCode] = useState(() => codeFromUrl());
   const [resetKey, setResetKey] = useState(0);
 
   async function addAccessCode(entry) {
