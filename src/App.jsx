@@ -3,8 +3,9 @@ import { supabase } from "./supabaseClient";
 import { saveCache, loadCache, getQueue, enqueueAction, removeFromQueue, queueCount } from "./offlineStore";
 import {
   LayoutGrid, CalendarDays, Users, MessageSquareText, Wrench,
-  Radio, Wallet, Building2, ChevronDown, Plus, X, Check, Bell, Menu, Shield,
-  Bed, BedSingle, BedDouble, Sparkles, Crown
+  Radio, Wallet, Building2, ChevronDown, ChevronUp, Plus, X, Check, Bell, Menu, Shield,
+  Bed, BedSingle, BedDouble, Sparkles, Crown, Moon, Sun,
+  UtensilsCrossed, ShoppingBag, Shirt
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -50,7 +51,7 @@ const FONTS = (
 const mapBranch = (r) => ({ id: r.id, name: r.name, location: r.location });
 const mapClient = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, phone: r.phone, idType: r.id_type || null, idNumber: r.id_number || null });
 const mapService = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, price: r.price, category: r.category, billingUnit: r.billing_unit || "flat" });
-const mapBooking = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, serviceIds: r.service_ids || [], checkIn: r.check_in, checkOut: r.check_out, checkInTime: r.check_in_time || null, checkOutTime: r.check_out_time || null, status: r.status, roomNumber: r.room_number || "", roomId: r.room_id || null });
+const mapBooking = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, serviceIds: r.service_ids || [], checkIn: r.check_in, checkOut: r.check_out, checkInTime: r.check_in_time || null, checkOutTime: r.check_out_time || null, status: r.status, roomNumber: r.room_number || "", roomId: r.room_id || null, isTemporary: r.is_temporary || false });
 const mapInvoice = (r) => ({ id: r.id, branchId: r.branch_id, bookingId: r.booking_id, amount: r.amount, status: r.status, paidAt: r.paid_at || null });
 const mapExpense = (r) => ({ id: r.id, branchId: r.branch_id, description: r.description, amount: Number(r.amount) || 0, createdAt: r.created_at });
 const mapInquiry = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, message: r.message, status: r.status });
@@ -102,10 +103,12 @@ function nightsBetween(checkIn, checkOut) {
   return diff > 0 ? diff : 1;
 }
 
-// "10/09-12/09 (2 nights)" — day/month numerals on both ends (no year: day-to-day
-// staff work doesn't need it, and dropping it shortens the column), with the night
-// count spelled out instead of making someone do the date math themselves.
-function formatDuration(checkIn, checkOut) {
+// "10/09-12/09" — day/month numerals on both ends; no year (day-to-day staff
+// work doesn't need it, and dropping it shortens the column). Split out from
+// formatDuration so the Bookings table can pair it with an icon instead of
+// the word "night(s)" while other surfaces (client history, printed invoice)
+// keep the plain-text version.
+function formatDateRange(checkIn, checkOut) {
   const short = (d) => {
     const dt = new Date(d);
     const dd = String(dt.getDate()).padStart(2, "0");
@@ -114,11 +117,61 @@ function formatDuration(checkIn, checkOut) {
   };
   const inLabel = checkIn && checkIn !== "TBC" ? short(checkIn) : (checkIn || "TBC");
   const outLabel = checkOut && checkOut !== "TBC" ? short(checkOut) : (checkOut || "TBC");
-  if (!checkIn || !checkOut || checkIn === "TBC" || checkOut === "TBC") {
-    return `${inLabel}-${outLabel}`;
-  }
+  return `${inLabel}-${outLabel}`;
+}
+
+// "10/09-12/09 (2 nights)" — spells the night count out in words, for places
+// that just need plain text (client history, printed invoice).
+function formatDuration(checkIn, checkOut) {
+  const range = formatDateRange(checkIn, checkOut);
+  if (!checkIn || !checkOut || checkIn === "TBC" || checkOut === "TBC") return range;
   const nights = nightsBetween(checkIn, checkOut);
-  return `${inLabel}-${outLabel} (${nights} night${nights === 1 ? "" : "s"})`;
+  return `${range} (${nights} night${nights === 1 ? "" : "s"})`;
+}
+
+// Temporary stay (day-use) rules: a flat rate regardless of how many of the
+// allowed hours are used, sold only against Single/Deluxe rooms, inside a
+// fixed 6am-6pm window, capped at 5 hours. Going over the cap converts the
+// booking back to a regular overnight stay rather than blocking the save —
+// see resolveBookingType below.
+const TEMP_STAY = {
+  rate: 10000,
+  maxHours: 5,
+  windowHours: 12, // 6am-6pm
+  eligibleRoomTypes: ["single", "deluxe"],
+};
+
+function isRoomEligibleForTemporaryStay(room) {
+  if (!room) return false;
+  const t = (room.roomType || "").toLowerCase();
+  return TEMP_STAY.eligibleRoomTypes.some((et) => t.includes(et));
+}
+
+// Hours between two "HH:MM" clock times on the same day. Returns null when
+// either time is missing, since "0 hrs" would misleadingly read as a real
+// zero-length stay rather than "not entered yet".
+function hoursBetweenTimes(startTime, endTime) {
+  if (!startTime || !endTime) return null;
+  const [sh, sm] = startTime.split(":").map(Number);
+  const [eh, em] = endTime.split(":").map(Number);
+  if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) return null;
+  const mins = (eh * 60 + em) - (sh * 60 + sm);
+  return mins > 0 ? Math.round((mins / 60) * 10) / 10 : null;
+}
+
+// Applied right before a temporary-stay booking is saved (and whenever its
+// times change while the modal is open): if the guest ends up booked for
+// longer than the 5-hour cap, the booking silently would have undercharged
+// them at the flat day-use rate — so it converts back to a regular overnight
+// booking instead, priced at the room's normal nightly rate. The caller is
+// responsible for showing the inline notice this implies.
+function resolveBookingType(bookingType, checkInTime, checkOutTime) {
+  if (bookingType !== "temporary") return { type: bookingType, converted: false };
+  const hrs = hoursBetweenTimes(checkInTime, checkOutTime);
+  if (hrs != null && hrs > TEMP_STAY.maxHours) {
+    return { type: "overnight", converted: true };
+  }
+  return { type: "temporary", converted: false };
 }
 
 // A room is unavailable for a proposed stay if it overlaps an existing,
@@ -223,7 +276,9 @@ function isBookingActiveOn(booking, dateStr) {
 function computeInvoiceAmount(booking, roomsList, roomRatesList, servicesList) {
   const nights = nightsBetween(booking.checkIn, booking.checkOut);
   const room = roomsList.find((r) => r.id === booking.roomId);
-  const accommodationAmount = rateForRoom(room, roomRatesList) * nights;
+  const accommodationAmount = booking.isTemporary
+    ? TEMP_STAY.rate
+    : rateForRoom(room, roomRatesList) * nights;
   const servicesAmount = (booking.serviceIds || []).reduce((sum, sid) => {
     const svc = servicesList.find((s) => s.id === sid);
     if (!svc) return sum;
@@ -432,6 +487,191 @@ function RoomBadge({ room, fallback, size = 15 }) {
       <Icon size={size} strokeWidth={2} color={C.clay} />
       <span style={{ fontWeight: 500 }}>{room.roomNumber}</span>
     </span>
+  );
+}
+
+// A moon marks a normal overnight stay; a sun marks a temporary (day-use)
+// stay shown as "hours used / 12-hour window" instead of a night count —
+// two visually distinct symbols for two different kinds of booking.
+function DurationDisplay({ booking }) {
+  if (booking.isTemporary) {
+    const hrs = hoursBetweenTimes(booking.checkInTime, booking.checkOutTime);
+    return (
+      <span title="Temporary stay" style={{ display: "inline-flex", alignItems: "center", gap: "5px", whiteSpace: "nowrap" }}>
+        <Sun size={14} strokeWidth={2} color={C.amber} />
+        <span>{hrs != null ? `${hrs}/${TEMP_STAY.windowHours} hrs` : "Temporary stay"}</span>
+      </span>
+    );
+  }
+  const nights = nightsBetween(booking.checkIn, booking.checkOut);
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", whiteSpace: "nowrap" }}>
+      <Moon size={14} strokeWidth={2} color={C.inkSoft} />
+      <span>{formatDateRange(booking.checkIn, booking.checkOut)} · {nights}</span>
+    </span>
+  );
+}
+
+// Service-request categories get one icon each, used wherever a category
+// needs to be scannable at a glance rather than read as text — currently
+// the guest-requests accordion on the provider side.
+const REQUEST_CATEGORY_ICONS = {
+  Kitchen: UtensilsCrossed,
+  Counter: ShoppingBag,
+  Amenities: Sparkles,
+  Laundry: Shirt,
+  General: MessageSquareText,
+  Airtime: Wallet,
+};
+function requestCategoryIcon(category) {
+  return REQUEST_CATEGORY_ICONS[category] || Bell;
+}
+
+// True once a request has reached its final stage — the point at which
+// staff no longer need to act on it. Kitchen/Counter go through the richer
+// sent → preparing → delivered → confirmed loop; everything else is the
+// simpler sent → handled → received loop.
+function isRequestSettled(r) {
+  const isRich = RICH_STAGE_CATEGORIES.includes(r.category);
+  const stage = r.stage || "sent";
+  return isRich ? stage === "confirmed" : stage === "received";
+}
+
+// Groups requests under the stay they belong to. The access code ties every
+// request from one guest's session together; staff-logged orders carry no
+// code, so those fall back to guest name + room, the next best identifier.
+function requestGroupKey(r) {
+  return r.code || `${r.guest_name || "Guest"}::${r.room_number || ""}`;
+}
+
+function RequestCard({ r, onAdvance }) {
+  const isRich = RICH_STAGE_CATEGORIES.includes(r.category);
+  const stage = r.stage || "sent";
+  return (
+    <div style={{ padding: "12px", border: `1px solid ${C.line}`, borderRadius: "9px", background: C.paperRaised }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}>
+        <div>
+          <div style={{ fontSize: "14px" }}>
+            {r.message}{r.quantity > 1 ? ` (× ${r.quantity})` : ""}
+          </div>
+          <div style={{ fontSize: "12px", color: C.inkSoft, marginTop: "3px" }}>
+            {new Date(r.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+          </div>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          {isRich ? (
+            <>
+              <Pill tone={stage === "confirmed" ? "completed" : stage === "delivered" ? "confirmed" : "pending"}>
+                {RICH_STAGE_LABELS[stage] || stage}
+              </Pill>
+              <div style={{ marginTop: "8px" }}>
+                {stage === "sent" && (
+                  <button onClick={() => onAdvance(r.id, "preparing")} style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}>
+                    Start preparing
+                  </button>
+                )}
+                {stage === "preparing" && (
+                  <button onClick={() => onAdvance(r.id, "delivered")} style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}>
+                    Mark delivered
+                  </button>
+                )}
+                {stage === "delivered" && (
+                  <div style={{ fontSize: "11.5px", color: C.inkSoft }}>Awaiting guest confirmation</div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              {stage === "received" ? (
+                <Pill tone="completed">Received by guest</Pill>
+              ) : stage === "handled" ? (
+                <>
+                  <Pill tone="pending">Handled</Pill>
+                  <div style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "6px" }}>Awaiting guest confirmation</div>
+                </>
+              ) : (
+                <button
+                  onClick={() => onAdvance(r.id, "handled")}
+                  style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}
+                >
+                  Mark handled
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Requests grouped by guest/stay rather than one long flat feed. A guest
+// with several requests collapses to a single row — category icons with
+// counts for a scan-at-a-glance read — and expands to the full itemized
+// list on click. A group with anything still awaiting action stays expanded
+// by default so nothing needing a response gets buried; fully settled
+// groups start collapsed. Clicking a row overrides that default either way.
+function RequestsPanel({ requests, onAdvance }) {
+  const [overrides, setOverrides] = useState({});
+
+  const groups = [];
+  const indexByKey = {};
+  requests.forEach((r) => {
+    const key = requestGroupKey(r);
+    if (!(key in indexByKey)) {
+      indexByKey[key] = groups.length;
+      groups.push({ key, guestName: r.guest_name || "Guest", roomNumber: r.room_number || "", roomType: r.room_type || "", items: [] });
+    }
+    groups[indexByKey[key]].items.push(r);
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+      {groups.map((g) => {
+        const hasActive = g.items.some((r) => !isRequestSettled(r));
+        const expanded = overrides[g.key] ?? hasActive;
+        const counts = {};
+        g.items.forEach((r) => { counts[r.category] = (counts[r.category] || 0) + 1; });
+        const categories = Object.keys(counts);
+        const roomHeader = g.roomNumber
+          ? `Room ${g.roomNumber}${g.roomType ? " · " + g.roomType : ""} — ${g.guestName}`
+          : g.guestName;
+        return (
+          <div key={g.key} style={{ border: `1px solid ${C.line}`, borderRadius: "9px", overflow: "hidden" }}>
+            <button
+              onClick={() => setOverrides((prev) => ({ ...prev, [g.key]: !expanded }))}
+              className="ws"
+              style={{
+                width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center",
+                gap: "10px", padding: "12px", background: "none", border: "none", cursor: "pointer", textAlign: "left"
+              }}
+            >
+              <div>
+                <div style={{ fontSize: "13.5px", fontWeight: 600, color: C.ink }}>{roomHeader}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "6px", flexWrap: "wrap" }}>
+                  {categories.map((cat) => {
+                    const Icon = requestCategoryIcon(cat);
+                    return (
+                      <span key={cat} title={cat} style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "12px", color: C.inkSoft }}>
+                        <Icon size={14} strokeWidth={2} color={C.clayDeep} />
+                        {counts[cat]}
+                      </span>
+                    );
+                  })}
+                  {hasActive && <Pill tone="pending">Needs attention</Pill>}
+                </div>
+              </div>
+              {expanded ? <ChevronUp size={18} color={C.inkSoft} style={{ flexShrink: 0 }} /> : <ChevronDown size={18} color={C.inkSoft} style={{ flexShrink: 0 }} />}
+            </button>
+            {expanded && (
+              <div style={{ padding: "0 12px 12px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                {g.items.map((r) => <RequestCard key={r.id} r={r} onAdvance={onAdvance} />)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1400,6 +1640,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       check_out: updates.checkOut,
       check_in_time: updates.checkInTime || null,
       check_out_time: updates.checkOutTime || null,
+      is_temporary: updates.isTemporary || false,
     };
     setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, ...updates } : b)));
     try {
@@ -1735,72 +1976,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
               {visibleRequests.length === 0 ? (
                 <p style={{ fontSize: "13.5px", color: C.inkSoft }}>{showAllRequests ? "No requests found." : "No requests yet today."}</p>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                  {visibleRequests.map((r) => {
-                    const isRich = RICH_STAGE_CATEGORIES.includes(r.category);
-                    const stage = r.stage || "sent";
-                    const roomHeader = r.room_number
-                      ? `Room ${r.room_number}${r.room_type ? " · " + r.room_type : ""} — ${r.guest_name || "Guest"}`
-                      : (r.guest_name || "Guest");
-                    return (
-                      <div key={r.id} style={{ padding: "12px", border: `1px solid ${C.line}`, borderRadius: "9px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}>
-                          <div>
-                            <div style={{ fontSize: "13.5px", fontWeight: 600, color: C.ink }}>{roomHeader}</div>
-                            <div style={{ fontSize: "14px", marginTop: "2px" }}>
-                              {r.message}{r.quantity > 1 ? ` (× ${r.quantity})` : ""}
-                            </div>
-                            <div style={{ fontSize: "12px", color: C.inkSoft, marginTop: "3px" }}>
-                              {new Date(r.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
-                            </div>
-                          </div>
-                          <div style={{ textAlign: "right", flexShrink: 0 }}>
-                            {isRich ? (
-                              <>
-                                <Pill tone={stage === "confirmed" ? "completed" : stage === "delivered" ? "confirmed" : "pending"}>
-                                  {RICH_STAGE_LABELS[stage] || stage}
-                                </Pill>
-                                <div style={{ marginTop: "8px" }}>
-                                  {stage === "sent" && (
-                                    <button onClick={() => advanceRequestStage(r.id, "preparing")} style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}>
-                                      Start preparing
-                                    </button>
-                                  )}
-                                  {stage === "preparing" && (
-                                    <button onClick={() => advanceRequestStage(r.id, "delivered")} style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}>
-                                      Mark delivered
-                                    </button>
-                                  )}
-                                  {stage === "delivered" && (
-                                    <div style={{ fontSize: "11.5px", color: C.inkSoft }}>Awaiting guest confirmation</div>
-                                  )}
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                {stage === "received" ? (
-                                  <Pill tone="completed">Received by guest</Pill>
-                                ) : stage === "handled" ? (
-                                  <>
-                                    <Pill tone="pending">Handled</Pill>
-                                    <div style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "6px" }}>Awaiting guest confirmation</div>
-                                  </>
-                                ) : (
-                                  <button
-                                    onClick={() => advanceRequestStage(r.id, "handled")}
-                                    style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}
-                                  >
-                                    Mark handled
-                                  </button>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                <RequestsPanel requests={visibleRequests} onAdvance={advanceRequestStage} />
               )}
             </Panel>
           )}
@@ -1818,8 +1994,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                 <thead>
                   <tr style={{ textAlign: "left", color: C.inkSoft, fontSize: "12.5px" }}>
-                    <th style={{ paddingBottom: "10px" }}>Client</th>
-                    <th>Room</th>
+                    <th style={{ paddingBottom: "10px" }}>Room</th>
+                    <th>Client</th>
                     <th>Services</th>
                     <th>Duration</th>
                     <th>Status</th>
@@ -1833,10 +2009,10 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                     const inv = invoices.find((v) => v.bookingId === bk.id);
                     return (
                     <tr key={bk.id} style={{ borderTop: `1px solid ${C.line}` }}>
-                      <td style={{ padding: "10px 0" }}>{clientName(bk.clientId)}</td>
-                      <td><RoomBadge room={rooms.find((r) => r.id === bk.roomId)} fallback={bk.roomNumber} /></td>
+                      <td style={{ padding: "10px 0" }}><RoomBadge room={rooms.find((r) => r.id === bk.roomId)} fallback={bk.roomNumber} /></td>
+                      <td>{clientName(bk.clientId)}</td>
                       <td>{serviceNames(bk.serviceIds)}</td>
-                      <td>{formatDuration(bk.checkIn, bk.checkOut)}</td>
+                      <td><DurationDisplay booking={bk} /></td>
                       <td><StatusPicker value={bk.status} onChange={(s) => updateBookingStatus(bk.id, s)} /></td>
                       <td>{invoiceControl(inv)}</td>
                       <td>
@@ -2281,6 +2457,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
               check_out: newBooking.checkOut,
               check_in_time: newBooking.checkInTime || null,
               check_out_time: newBooking.checkOutTime || null,
+              is_temporary: newBooking.isTemporary || false,
               status: newBooking.status,
             };
             try {
@@ -2314,7 +2491,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
               const tempBookingId = "temp-" + Date.now();
               enqueueAction({ type: "addBooking", payload, tempId: tempBookingId });
               setPendingCount(queueCount());
-              setBookings((prev) => [...prev, { id: tempBookingId, branchId, clientId: newBooking.clientId, roomId: newBooking.roomId, serviceIds: newBooking.serviceIds, checkIn: newBooking.checkIn, checkOut: newBooking.checkOut, checkInTime: newBooking.checkInTime || null, checkOutTime: newBooking.checkOutTime || null, status: newBooking.status }]);
+              setBookings((prev) => [...prev, { id: tempBookingId, branchId, clientId: newBooking.clientId, roomId: newBooking.roomId, serviceIds: newBooking.serviceIds, checkIn: newBooking.checkIn, checkOut: newBooking.checkOut, checkInTime: newBooking.checkInTime || null, checkOutTime: newBooking.checkOutTime || null, isTemporary: newBooking.isTemporary || false, status: newBooking.status }]);
               // Created while offline: no real booking id to attach an invoice to
               // yet, so this one gets its invoice at confirm-time instead (the
               // same fallback mentioned above).
@@ -2483,17 +2660,43 @@ function EditBookingModal({ booking, clients, services, rooms, roomRates, existi
   const [checkInTime, setCheckInTime] = useState(booking.checkInTime || "");
   const [checkOutTime, setCheckOutTime] = useState(booking.checkOutTime || "");
   const [saving, setSaving] = useState(false);
+  const [bookingType, setBookingType] = useState(booking.isTemporary ? "temporary" : "overnight");
+  const [convertedNotice, setConvertedNotice] = useState(false);
 
   const toggleService = (id) =>
     setServiceIds((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
 
   const selectedRoom = rooms.find((r) => r.id === roomId);
   const nights = checkIn && checkOut ? nightsBetween(checkIn, checkOut) : 1;
-  const accommodationTotal = rateForRoom(selectedRoom, roomRates) * nights;
+  const isTemporary = bookingType === "temporary";
+  const temporaryHours = hoursBetweenTimes(checkInTime, checkOutTime);
+  const accommodationTotal = isTemporary ? TEMP_STAY.rate : rateForRoom(selectedRoom, roomRates) * nights;
+
+  useEffect(() => {
+    if (isTemporary && checkIn) setCheckOut(checkIn);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTemporary, checkIn]);
+
+  useEffect(() => {
+    const resolved = resolveBookingType(bookingType, checkInTime, checkOutTime);
+    if (resolved.converted) {
+      setBookingType("overnight");
+      setConvertedNotice(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkInTime, checkOutTime]);
+
+  function selectBookingType(type) {
+    setBookingType(type);
+    setConvertedNotice(false);
+    if (type === "temporary" && selectedRoom && !isRoomEligibleForTemporaryStay(selectedRoom)) {
+      setRoomId("");
+    }
+  }
 
   async function handleSave() {
     setSaving(true);
-    await onSave({ clientId, roomId: roomId || null, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC", checkInTime: checkInTime || null, checkOutTime: checkOutTime || null });
+    await onSave({ clientId, roomId: roomId || null, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC", checkInTime: checkInTime || null, checkOutTime: checkOutTime || null, isTemporary });
     setSaving(false);
   }
 
@@ -2513,14 +2716,53 @@ function EditBookingModal({ booking, clients, services, rooms, roomRates, existi
           {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
 
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Stay type</label>
+        <div style={{ display: "flex", gap: "8px", margin: "6px 0 4px" }}>
+          {["overnight", "temporary"].map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => selectBookingType(t)}
+              style={{
+                flex: 1, padding: "9px", borderRadius: "7px", fontSize: "13.5px", cursor: "pointer",
+                border: bookingType === t ? `1px solid ${C.ink}` : `1px solid ${C.line}`,
+                background: bookingType === t ? C.ink : "none",
+                color: bookingType === t ? "#fff" : C.ink,
+              }}
+            >
+              {t === "overnight" ? "Overnight" : "Temporary stay"}
+            </button>
+          ))}
+        </div>
+        {isTemporary && (
+          <p style={{ fontSize: "11.5px", color: C.inkSoft, margin: "0 0 10px" }}>
+            Day-use only — 6am to 6pm, up to 5 hours, flat {money(TEMP_STAY.rate)}. Single and Deluxe rooms only.
+          </p>
+        )}
+        {convertedNotice && (
+          <p style={{ fontSize: "11.5px", color: C.amber, margin: "0 0 10px", fontWeight: 500 }}>
+            Converted to overnight — exceeds the {TEMP_STAY.maxHours}-hr temporary-stay limit.
+          </p>
+        )}
+        {!isTemporary && !convertedNotice && <div style={{ marginBottom: "14px" }} />}
+
         <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Room</label>
         <select value={roomId} onChange={(e) => setRoomId(e.target.value)} style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 6px", fontSize: "14px" }}>
           <option value="">— Select a room —</option>
-          {rooms.map((r) => <option key={r.id} value={r.id}>{r.roomNumber} — {r.roomType}</option>)}
+          {rooms.map((r) => {
+            const ineligible = isTemporary && !isRoomEligibleForTemporaryStay(r);
+            return (
+              <option key={r.id} value={r.id} disabled={ineligible}>
+                {r.roomNumber} — {r.roomType}{ineligible ? " — not available for temporary stay" : ""}
+              </option>
+            );
+          })}
         </select>
         {selectedRoom ? (
           <p style={{ fontSize: "12px", color: C.inkSoft, margin: "0 0 14px" }}>
-            {selectedRoom.roomType} · {money(rateForRoom(selectedRoom, roomRates))}/night{checkIn && checkOut ? ` × ${nights} nights = ${money(accommodationTotal)}` : ""}
+            {isTemporary
+              ? `${selectedRoom.roomType} · Temporary stay · ${money(accommodationTotal)} flat`
+              : `${selectedRoom.roomType} · ${money(rateForRoom(selectedRoom, roomRates))}/night${checkIn && checkOut ? ` × ${nights} nights = ${money(accommodationTotal)}` : ""}`}
           </p>
         ) : (
           <div style={{ marginBottom: "14px" }} />
@@ -2543,19 +2785,24 @@ function EditBookingModal({ booking, clients, services, rooms, roomRates, existi
           </div>
           <div style={{ flex: 1 }}>
             <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-out</label>
-            <input type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
+            <input type="date" value={checkOut} disabled={isTemporary} onChange={(e) => setCheckOut(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box", background: isTemporary ? C.paper : "#fff" }} />
           </div>
         </div>
         <div style={{ display: "flex", gap: "10px", marginBottom: "14px" }}>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-in time (optional)</label>
+            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-in time{isTemporary ? "" : " (optional)"}</label>
             <input type="time" value={checkInTime} onChange={(e) => setCheckInTime(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
           </div>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-out time (optional)</label>
+            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-out time{isTemporary ? "" : " (optional)"}</label>
             <input type="time" value={checkOutTime} onChange={(e) => setCheckOutTime(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
           </div>
         </div>
+        {isTemporary && temporaryHours != null && (
+          <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 14px" }}>
+            {temporaryHours}/{TEMP_STAY.windowHours} hrs booked.
+          </p>
+        )}
         {checkIn && checkOut && checkIn === checkOut && (
           <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 12px" }}>
             Same-day check-in/check-out leaves the room vacant that night, so it won't block another booking.
@@ -2597,13 +2844,44 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
   const [checkInTime, setCheckInTime] = useState("");
   const [checkOutTime, setCheckOutTime] = useState("");
   const [saving, setSaving] = useState(false);
+  const [bookingType, setBookingType] = useState("overnight");
+  const [convertedNotice, setConvertedNotice] = useState(false);
   const idNumberRef = useRef(null);
 
   const matchedClient = clients.find((c) => c.name.trim().toLowerCase() === clientQuery.trim().toLowerCase());
   const selectedRoom = rooms.find((r) => r.id === roomId);
   const roomTaken = roomId && !isRoomAvailable(roomId, checkIn || null, checkOut || null, existingBookings, null);
   const nights = checkIn && checkOut ? nightsBetween(checkIn, checkOut) : 1;
-  const accommodationTotal = rateForRoom(selectedRoom, roomRates) * nights;
+  const isTemporary = bookingType === "temporary";
+  const temporaryHours = hoursBetweenTimes(checkInTime, checkOutTime);
+  const accommodationTotal = isTemporary ? TEMP_STAY.rate : rateForRoom(selectedRoom, roomRates) * nights;
+
+  // A temporary stay always books the same calendar day — keep check-out in
+  // step with check-in automatically rather than making staff set both.
+  useEffect(() => {
+    if (isTemporary && checkIn) setCheckOut(checkIn);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTemporary, checkIn]);
+
+  // Going over the 5-hour cap would silently undercharge a guest at the flat
+  // day-use rate, so this converts the booking back to a regular overnight
+  // stay the moment the times say it's run long — before save, not after.
+  useEffect(() => {
+    const resolved = resolveBookingType(bookingType, checkInTime, checkOutTime);
+    if (resolved.converted) {
+      setBookingType("overnight");
+      setConvertedNotice(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkInTime, checkOutTime]);
+
+  function selectBookingType(type) {
+    setBookingType(type);
+    setConvertedNotice(false);
+    if (type === "temporary" && selectedRoom && !isRoomEligibleForTemporaryStay(selectedRoom)) {
+      setRoomId("");
+    }
+  }
 
   function handleQueryChange(value) {
     setClientQuery(value);
@@ -2614,7 +2892,7 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
   const toggleService = (id) =>
     setServiceIds((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
 
-  const canSave = clientQuery.trim().length > 0 && !roomTaken;
+  const canSave = clientQuery.trim().length > 0 && !roomTaken && (!isTemporary || (checkInTime && checkOutTime));
 
   async function handleSave() {
     setSaving(true);
@@ -2631,7 +2909,7 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
       if (!created) { setSaving(false); return; }
       finalClientId = created.id;
     }
-    const ok = await onSave({ clientId: finalClientId, roomId: roomId || null, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC", checkInTime: checkInTime || null, checkOutTime: checkOutTime || null, status: "pending" });
+    const ok = await onSave({ clientId: finalClientId, roomId: roomId || null, serviceIds, checkIn: checkIn || "TBC", checkOut: checkOut || "TBC", checkInTime: checkInTime || null, checkOutTime: checkOutTime || null, isTemporary, status: "pending" });
     setSaving(false);
     // onSave returns false on a real conflict (e.g. room double-booked) — leave the
     // modal open with what the person typed so they can just change the room/dates.
@@ -2719,14 +2997,47 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
           </div>
         )}
 
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Stay type</label>
+        <div style={{ display: "flex", gap: "8px", margin: "6px 0 4px" }}>
+          {["overnight", "temporary"].map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => selectBookingType(t)}
+              style={{
+                flex: 1, padding: "9px", borderRadius: "7px", fontSize: "13.5px", cursor: "pointer",
+                border: bookingType === t ? `1px solid ${C.ink}` : `1px solid ${C.line}`,
+                background: bookingType === t ? C.ink : "none",
+                color: bookingType === t ? "#fff" : C.ink,
+              }}
+            >
+              {t === "overnight" ? "Overnight" : "Temporary stay"}
+            </button>
+          ))}
+        </div>
+        {isTemporary && (
+          <p style={{ fontSize: "11.5px", color: C.inkSoft, margin: "0 0 10px" }}>
+            Day-use only — 6am to 6pm, up to 5 hours, flat {money(TEMP_STAY.rate)}. Single and Deluxe rooms only.
+          </p>
+        )}
+        {convertedNotice && (
+          <p style={{ fontSize: "11.5px", color: C.amber, margin: "0 0 10px", fontWeight: 500 }}>
+            Converted to overnight — exceeds the {TEMP_STAY.maxHours}-hr temporary-stay limit.
+          </p>
+        )}
+        {!isTemporary && !convertedNotice && <div style={{ marginBottom: "14px" }} />}
+
         <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Room</label>
         <select value={roomId} onChange={(e) => setRoomId(e.target.value)} style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 6px", fontSize: "14px" }}>
           <option value="">— Select a room —</option>
           {rooms.map((r) => {
-            const taken = !isRoomAvailable(r.id, checkIn || null, checkOut || null, existingBookings, null);
+            const dateTaken = !isRoomAvailable(r.id, checkIn || null, checkOut || null, existingBookings, null);
+            const ineligible = isTemporary && !isRoomEligibleForTemporaryStay(r);
+            const taken = dateTaken || ineligible;
             return (
               <option key={r.id} value={r.id} disabled={taken}>
-                {r.roomNumber} — {r.roomType} ({money(rateForRoom(r, roomRates))}/night){taken ? " (booked those dates)" : ""}
+                {r.roomNumber} — {r.roomType} ({isTemporary ? money(TEMP_STAY.rate) : `${money(rateForRoom(r, roomRates))}/night`})
+                {ineligible ? " — not available for temporary stay" : dateTaken ? " (booked those dates)" : ""}
               </option>
             );
           })}
@@ -2735,7 +3046,9 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
           <p style={{ fontSize: "12px", color: roomTaken ? C.red : C.inkSoft, margin: "0 0 14px" }}>
             {roomTaken
               ? "This room is already booked for those dates."
-              : `${selectedRoom.roomType} · ${money(rateForRoom(selectedRoom, roomRates))}/night${checkIn && checkOut ? ` × ${nights} nights = ${money(accommodationTotal)}` : ""}`}
+              : isTemporary
+                ? `${selectedRoom.roomType} · Temporary stay · ${money(accommodationTotal)} flat`
+                : `${selectedRoom.roomType} · ${money(rateForRoom(selectedRoom, roomRates))}/night${checkIn && checkOut ? ` × ${nights} nights = ${money(accommodationTotal)}` : ""}`}
           </p>
         )}
         {!selectedRoom && <div style={{ marginBottom: "14px" }} />}
@@ -2760,19 +3073,24 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
           </div>
           <div style={{ flex: 1 }}>
             <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-out</label>
-            <input type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
+            <input type="date" value={checkOut} disabled={isTemporary} onChange={(e) => setCheckOut(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box", background: isTemporary ? C.paper : "#fff" }} />
           </div>
         </div>
         <div style={{ display: "flex", gap: "10px", marginBottom: "18px" }}>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-in time (optional)</label>
+            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-in time{isTemporary ? "" : " (optional)"}</label>
             <input type="time" value={checkInTime} onChange={(e) => setCheckInTime(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
           </div>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-out time (optional)</label>
+            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Check-out time{isTemporary ? "" : " (optional)"}</label>
             <input type="time" value={checkOutTime} onChange={(e) => setCheckOutTime(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", boxSizing: "border-box" }} />
           </div>
         </div>
+        {isTemporary && temporaryHours != null && (
+          <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 18px" }}>
+            {temporaryHours}/{TEMP_STAY.windowHours} hrs booked.
+          </p>
+        )}
         {checkIn && checkOut && checkIn === checkOut && (
           <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 18px" }}>
             Same-day check-in/check-out leaves the room vacant that night, so it won't block another booking.
