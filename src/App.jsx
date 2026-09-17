@@ -505,9 +505,12 @@ function DurationDisplay({ booking }) {
   }
   const nights = nightsBetween(booking.checkIn, booking.checkOut);
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", whiteSpace: "nowrap" }}>
-      <Moon size={14} strokeWidth={2} color={C.inkSoft} />
-      <span>{formatDateRange(booking.checkIn, booking.checkOut)} · {nights}</span>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", whiteSpace: "nowrap" }}>
+      <span>{formatDateRange(booking.checkIn, booking.checkOut)}</span>
+      <span title={`${nights} night${nights === 1 ? "" : "s"}`} style={{ display: "inline-flex", alignItems: "center", gap: "3px", color: C.inkSoft }}>
+        <Moon size={13} strokeWidth={2} />
+        {nights}
+      </span>
     </span>
   );
 }
