@@ -5,7 +5,7 @@ import {
   LayoutGrid, CalendarDays, Users, MessageSquareText, Wrench,
   Radio, Wallet, Building2, ChevronDown, ChevronUp, Plus, X, Check, Bell, Menu, Shield,
   Bed, BedSingle, BedDouble, Sparkles, Crown, Moon, Sun,
-  UtensilsCrossed, ShoppingBag, Shirt, ImageOff, Upload, Pencil, ArrowUp
+  UtensilsCrossed, ShoppingBag, Shirt, ImageOff, Upload, Pencil, ArrowUp, Home, Phone
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -3938,6 +3938,245 @@ function OperatorApp({ onExit }) {
 --------------------------------------------------------- */
 const GUEST_CODE_KEY = "utulivu_guest_code";
 
+// The guest's own request status feed — the same card whether it's shown
+// filtered to just Kitchen (on the Kitchen tab) or in full across every
+// category (on the Requests tab), so the two views can never drift apart.
+function GuestRequestStatus({ requests, isExpired, confirmingId, onConfirm, emptyText }) {
+  if (requests.length === 0) {
+    return emptyText ? <p style={{ fontSize: "13px", color: C.inkSoft, margin: 0 }}>{emptyText}</p> : null;
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+      {requests.map((r) => {
+        const isRich = RICH_STAGE_CATEGORIES.includes(r.category);
+        const stage = r.stage || "sent";
+        return (
+          <div key={r.id} style={{ border: `1px solid ${C.line}`, borderRadius: "8px", padding: "12px" }}>
+            <div style={{ fontSize: "13.5px", fontWeight: 500 }}>
+              {r.message}{r.quantity > 1 ? ` (× ${r.quantity})` : ""}
+            </div>
+            {isRich ? (
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "8px", flexWrap: "wrap" }}>
+                {RICH_STAGES.map((s, i) => {
+                  const reached = RICH_STAGES.indexOf(stage) >= i;
+                  return (
+                    <span key={s} style={{
+                      fontSize: "11px", fontWeight: 500, padding: "3px 9px", borderRadius: "999px",
+                      background: reached ? C.signalSoft : C.line, color: reached ? "#1E6E67" : C.inkSoft
+                    }}>
+                      {RICH_STAGE_LABELS[s]}
+                    </span>
+                  );
+                })}
+                {stage === "delivered" && (
+                  <button
+                    disabled={confirmingId === r.id || isExpired}
+                    onClick={() => onConfirm(r)}
+                    style={{ fontSize: "12px", border: "none", background: isExpired ? C.line : C.signal, color: isExpired ? C.inkSoft : "#fff", borderRadius: "6px", padding: "5px 11px", cursor: isExpired ? "default" : "pointer", marginLeft: "auto" }}
+                  >
+                    {confirmingId === r.id ? "Confirming…" : "Confirm received"}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "8px" }}>
+                <span style={{ fontSize: "11.5px", color: C.inkSoft }}>{SIMPLE_STAGE_LABELS[stage] || stage}</span>
+                {stage === "handled" && (
+                  <button
+                    disabled={confirmingId === r.id || isExpired}
+                    onClick={() => onConfirm(r)}
+                    style={{ fontSize: "12px", border: "none", background: isExpired ? C.line : C.signal, color: isExpired ? C.inkSoft : "#fff", borderRadius: "6px", padding: "5px 11px", cursor: isExpired ? "default" : "pointer" }}
+                  >
+                    {confirmingId === r.id ? "Confirming…" : "Mark as received"}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// The Kitchen tab's photo menu — a fork/knife placeholder for any item with
+// no uploaded photo, greyed out and disabled once a service is toggled
+// unavailable, with an optional per-item note on how to prepare it.
+function KitchenOrderGrid({ items, quantities, setQuantities, cookingNotes, setCookingNotes, requestedIds, sendingId, onRequest, isExpired }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "10px" }}>
+      {items.map((item) => {
+        const requested = requestedIds.includes(item.id);
+        const available = item.is_available !== false;
+        const qty = quantities[item.id] || 1;
+        const disabled = isExpired || !available;
+        return (
+          <div key={item.id} style={{
+            border: `1px solid ${C.line}`, borderRadius: "10px", overflow: "hidden",
+            opacity: available ? 1 : 0.55, background: C.paperRaised
+          }}>
+            {item.image_url ? (
+              <img src={item.image_url} alt={item.name} style={{ width: "100%", height: "90px", objectFit: "cover", display: "block" }} />
+            ) : (
+              <div style={{ width: "100%", height: "90px", background: C.paper, display: "flex", alignItems: "center", justifyContent: "center", color: C.inkSoft }}>
+                <UtensilsCrossed size={22} />
+              </div>
+            )}
+            <div style={{ padding: "10px" }}>
+              <div style={{ fontSize: "13px", fontWeight: 500 }}>{item.name}</div>
+              <div style={{ fontSize: "11.5px", color: C.inkSoft, marginBottom: "8px" }}>
+                {item.price > 0 ? `TSh ${Number(item.price).toLocaleString()}` : "Free"}
+              </div>
+
+              {!available ? (
+                <span style={{ fontSize: "11.5px", color: C.red, fontWeight: 500 }}>Currently unavailable</span>
+              ) : requested ? (
+                <span style={{ fontSize: "12px", color: "#1E6E67", fontWeight: 500 }}>Requested</span>
+              ) : (
+                <>
+                  <div style={{ display: "flex", gap: "6px", marginBottom: "6px" }}>
+                    <input
+                      type="number"
+                      min="1"
+                      value={qty}
+                      onChange={(e) => setQuantities((prev) => ({ ...prev, [item.id]: Math.max(1, Number(e.target.value) || 1) }))}
+                      disabled={disabled}
+                      style={{ width: "42px", padding: "6px", borderRadius: "6px", border: `1px solid ${C.line}`, fontSize: "12px", textAlign: "center" }}
+                    />
+                    <input
+                      value={cookingNotes[item.id] || ""}
+                      onChange={(e) => setCookingNotes((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                      placeholder="How prepared? (optional)"
+                      disabled={disabled}
+                      style={{ flex: 1, minWidth: 0, padding: "6px 8px", borderRadius: "6px", border: `1px solid ${C.line}`, fontSize: "11.5px", boxSizing: "border-box" }}
+                    />
+                  </div>
+                  <button
+                    disabled={disabled || sendingId === item.id}
+                    onClick={() => onRequest(item)}
+                    style={{
+                      width: "100%", fontSize: "12.5px", border: "none", borderRadius: "6px", padding: "6px 0",
+                      background: disabled ? C.line : C.clay, color: disabled ? C.inkSoft : "#fff",
+                      cursor: disabled ? "default" : "pointer", opacity: sendingId === item.id ? 0.7 : 1
+                    }}
+                  >
+                    {sendingId === item.id ? "Sending…" : "Request"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// The compact row list used for Counter/Amenities/Laundry — no photos, just
+// name, price, an optional quantity (Laundry only), and the same
+// unavailable/requested states as the Kitchen grid.
+function OtherServicesList({ items, quantities, setQuantities, requestedIds, sendingId, onRequest, isExpired }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+      {items.map((item) => {
+        const requested = requestedIds.includes(item.id);
+        const available = item.is_available !== false;
+        const hasQuantity = item.category === "Laundry";
+        const qty = quantities[item.id] || 1;
+        const disabled = isExpired || !available;
+        return (
+          <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${C.line}`, gap: "10px", opacity: available ? 1 : 0.55 }}>
+            <div>
+              <div style={{ fontSize: "13.5px", fontWeight: 500 }}>{item.name}</div>
+              <div style={{ fontSize: "12px", color: C.inkSoft }}>{item.price > 0 ? `TSh ${Number(item.price).toLocaleString()}` : "Free"}</div>
+            </div>
+            {!available ? (
+              <span style={{ fontSize: "12px", color: C.red, fontWeight: 500, whiteSpace: "nowrap" }}>Currently unavailable</span>
+            ) : requested ? (
+              <span style={{ fontSize: "12.5px", color: "#1E6E67", fontWeight: 500, whiteSpace: "nowrap" }}>Requested</span>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                {hasQuantity && (
+                  <input
+                    type="number"
+                    min="1"
+                    value={qty}
+                    onChange={(e) => setQuantities((prev) => ({ ...prev, [item.id]: Math.max(1, Number(e.target.value) || 1) }))}
+                    disabled={disabled}
+                    style={{ width: "48px", padding: "6px", borderRadius: "6px", border: `1px solid ${C.line}`, fontSize: "12.5px", textAlign: "center" }}
+                  />
+                )}
+                <button
+                  disabled={disabled || sendingId === item.id}
+                  onClick={() => onRequest(item)}
+                  style={{
+                    fontSize: "12.5px", border: "none", borderRadius: "6px", padding: "6px 12px", whiteSpace: "nowrap",
+                    background: disabled ? C.line : C.clay, color: disabled ? C.inkSoft : "#fff",
+                    cursor: disabled ? "default" : "pointer", opacity: sendingId === item.id ? 0.7 : 1
+                  }}
+                >
+                  {sendingId === item.id ? "Sending…" : "Request"}
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const GUEST_TABS = [
+  { id: "stay", label: "Stay", icon: Home },
+  { id: "kitchen", label: "Kitchen", icon: UtensilsCrossed },
+  { id: "requests", label: "Requests", icon: Bell },
+  { id: "frontdesk", label: "Front desk", icon: Phone },
+];
+
+// The bottom navigation bar itself — full-width chrome (unlike the content
+// above it and the message composer below, which both stay content-width),
+// matching how a bottom tab bar normally reads in a phone app.
+function GuestTabBar({ active, onChange, requestBadge }) {
+  return (
+    <div className="no-print" style={{
+      position: "fixed", left: 0, right: 0, bottom: 0, background: C.paperRaised,
+      borderTop: `1px solid ${C.line}`, display: "flex", zIndex: 5,
+      boxShadow: "0 -4px 14px rgba(22,35,59,0.06)"
+    }}>
+      {GUEST_TABS.map((t) => {
+        const Icon = t.icon;
+        const isActive = active === t.id;
+        return (
+          <button
+            key={t.id}
+            onClick={() => onChange(t.id)}
+            className="ws"
+            style={{
+              flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "3px",
+              padding: "9px 4px 8px", border: "none", background: "none", cursor: "pointer", position: "relative",
+              color: isActive ? C.clay : C.inkSoft,
+            }}
+          >
+            <span style={{ position: "relative" }}>
+              <Icon size={19} strokeWidth={isActive ? 2.3 : 2} />
+              {t.id === "requests" && requestBadge > 0 && (
+                <span style={{
+                  position: "absolute", top: "-4px", right: "-8px", background: C.signal, color: "#fff",
+                  fontSize: "10px", fontWeight: 600, borderRadius: "999px", padding: "1px 5px", minWidth: "15px", textAlign: "center"
+                }}>
+                  {requestBadge}
+                </span>
+              )}
+            </span>
+            <span style={{ fontSize: "11px", fontWeight: isActive ? 600 : 500 }}>{t.label}</span>
+            {isActive && <span style={{ position: "absolute", bottom: 0, left: "20%", right: "20%", height: "2px", background: C.clay, borderRadius: "2px" }} />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function GuestApp({ onExit, initialCode }) {
   const savedCode = (() => {
     try { return localStorage.getItem(GUEST_CODE_KEY); } catch (e) { return null; }
@@ -3967,6 +4206,7 @@ function GuestApp({ onExit, initialCode }) {
   const [confirmingId, setConfirmingId] = useState(null);
   const [paidSoFar, setPaidSoFar] = useState(0);
   const [hasStayedBefore, setHasStayedBefore] = useState(false);
+  const [guestTab, setGuestTab] = useState("stay");
 
   useEffect(() => {
     if (startCode) lookup(startCode, { silent: Boolean(!initialCode && savedCode) });
@@ -4000,7 +4240,10 @@ function GuestApp({ onExit, initialCode }) {
       .then(({ data }) => {
         if (data) {
           setGuestServices(data);
-          const firstCategory = CATEGORY_ORDER.find((cat) => data.some((s) => s.category === cat));
+          // Kitchen has its own dedicated tab now, so the pill switcher on
+          // the Requests tab only ever needs to default to one of the other
+          // three categories.
+          const firstCategory = CATEGORY_ORDER.filter((cat) => cat !== "Kitchen").find((cat) => data.some((s) => s.category === cat));
           setActiveCategory(firstCategory || null);
         }
         setGuestServicesLoading(false);
@@ -4191,7 +4434,7 @@ function GuestApp({ onExit, initialCode }) {
   };
 
   return (
-    <div className="ws" style={{ minHeight: "560px", background: C.paper, display: "flex", justifyContent: "center", padding: "36px 20px 100px" }}>
+    <div className="ws" style={{ minHeight: "560px", background: C.paper, display: "flex", justifyContent: "center", padding: "36px 20px 170px" }}>
       {FONTS}
       <div style={{ width: "min(420px, 100%)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
@@ -4214,6 +4457,8 @@ function GuestApp({ onExit, initialCode }) {
             piece of information ("here's your stay, here's what you owe, here's
             what you've asked for"), and splitting it across headered panels was
             just wasted vertical space. */}
+        {guestTab === "stay" && (
+        <>
         <Panel title="Booking">
           <div id="stay-summary-print" style={{ fontSize: "14px", lineHeight: 1.8 }}>
             {access.room_number && (
@@ -4290,62 +4535,6 @@ function GuestApp({ onExit, initialCode }) {
             </div>
           </div>
 
-          {myRequests.length > 0 && (
-            <div style={{ borderTop: `1px solid ${C.line}`, marginTop: "14px", paddingTop: "14px" }}>
-              <div style={{ fontSize: "13px", fontWeight: 500, color: C.ink, marginBottom: "10px" }}>Your requests</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {myRequests.map((r) => {
-                  const isRich = RICH_STAGE_CATEGORIES.includes(r.category);
-                  const stage = r.stage || "sent";
-                  return (
-                    <div key={r.id} style={{ border: `1px solid ${C.line}`, borderRadius: "8px", padding: "12px" }}>
-                      <div style={{ fontSize: "13.5px", fontWeight: 500 }}>
-                        {r.message}{r.quantity > 1 ? ` (× ${r.quantity})` : ""}
-                      </div>
-                      {isRich ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "8px", flexWrap: "wrap" }}>
-                          {RICH_STAGES.map((s, i) => {
-                            const reached = RICH_STAGES.indexOf(stage) >= i;
-                            return (
-                              <span key={s} style={{
-                                fontSize: "11px", fontWeight: 500, padding: "3px 9px", borderRadius: "999px",
-                                background: reached ? C.signalSoft : C.line, color: reached ? "#1E6E67" : C.inkSoft
-                              }}>
-                                {RICH_STAGE_LABELS[s]}
-                              </span>
-                            );
-                          })}
-                          {stage === "delivered" && (
-                            <button
-                              disabled={confirmingId === r.id || isExpired}
-                              onClick={() => confirmRequest(r)}
-                              style={{ fontSize: "12px", border: "none", background: isExpired ? C.line : C.signal, color: isExpired ? C.inkSoft : "#fff", borderRadius: "6px", padding: "5px 11px", cursor: isExpired ? "default" : "pointer", marginLeft: "auto" }}
-                            >
-                              {confirmingId === r.id ? "Confirming…" : "Confirm received"}
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "8px" }}>
-                          <span style={{ fontSize: "11.5px", color: C.inkSoft }}>{SIMPLE_STAGE_LABELS[stage] || stage}</span>
-                          {stage === "handled" && (
-                            <button
-                              disabled={confirmingId === r.id || isExpired}
-                              onClick={() => confirmRequest(r)}
-                              style={{ fontSize: "12px", border: "none", background: isExpired ? C.line : C.signal, color: isExpired ? C.inkSoft : "#fff", borderRadius: "6px", padding: "5px 11px", cursor: isExpired ? "default" : "pointer" }}
-                            >
-                              {confirmingId === r.id ? "Confirming…" : "Mark as received"}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {(access.invoice_amount != null || ordersTotal > 0) && (
             <button
               onClick={() => window.print()}
@@ -4364,152 +4553,111 @@ function GuestApp({ onExit, initialCode }) {
           }
         `}</style>
 
-        <div style={{ height: "14px" }} />
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: "18px" }}>
+          <button onClick={switchGuest} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
+            Not you? Switch guest
+          </button>
+          {onExit && (
+            <button onClick={onExit} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
+              ← Choose a different portal
+            </button>
+          )}
+        </div>
+        </>
+        )}
 
-        {guestServices.length > 0 && (
+        {/* Kitchen tab — the photo menu, plus a Kitchen-only slice of the
+            guest's own request status so "is my order coming?" doesn't
+            require a tab switch right after placing it. */}
+        {guestTab === "kitchen" && (
           <>
-            <Panel title="Order & requests">
-              <div style={{ display: "flex", gap: "6px", marginBottom: "14px", flexWrap: "wrap" }}>
-                {CATEGORY_ORDER.filter((cat) => guestServices.some((s) => s.category === cat)).map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setActiveCategory(cat)}
-                    style={{
-                      fontSize: "12.5px", fontWeight: 500, border: `1px solid ${C.line}`, borderRadius: "999px",
-                      padding: "6px 13px", cursor: "pointer",
-                      background: activeCategory === cat ? C.ink : "none",
-                      color: activeCategory === cat ? "#fff" : C.inkSoft,
-                    }}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
-              <p style={{ fontSize: "13px", color: C.inkSoft, marginTop: 0, marginBottom: "14px" }}>
-                {activeCategory === "Kitchen" && "Pick a quantity, add any notes on how you'd like it prepared, and send your order to the kitchen."}
-                {(activeCategory === "Counter" || activeCategory === "Amenities") && "Tap to request any item — staff will bring it to your room."}
-                {activeCategory === "Laundry" && "Pick a quantity per item — ironing is complimentary."}
-              </p>
-
-              {activeCategory === "Kitchen" ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "10px" }}>
-                  {guestServices.filter((item) => item.category === "Kitchen").map((item) => {
-                    const requested = requestedIds.includes(item.id);
-                    const available = item.is_available !== false;
-                    const qty = quantities[item.id] || 1;
-                    const disabled = isExpired || !available;
-                    return (
-                      <div key={item.id} style={{
-                        border: `1px solid ${C.line}`, borderRadius: "10px", overflow: "hidden",
-                        opacity: available ? 1 : 0.55, background: C.paperRaised
-                      }}>
-                        {item.image_url ? (
-                          <img src={item.image_url} alt={item.name} style={{ width: "100%", height: "90px", objectFit: "cover", display: "block" }} />
-                        ) : (
-                          <div style={{ width: "100%", height: "90px", background: C.paper, display: "flex", alignItems: "center", justifyContent: "center", color: C.inkSoft }}>
-                            <UtensilsCrossed size={22} />
-                          </div>
-                        )}
-                        <div style={{ padding: "10px" }}>
-                          <div style={{ fontSize: "13px", fontWeight: 500 }}>{item.name}</div>
-                          <div style={{ fontSize: "11.5px", color: C.inkSoft, marginBottom: "8px" }}>
-                            {item.price > 0 ? `TSh ${Number(item.price).toLocaleString()}` : "Free"}
-                          </div>
-
-                          {!available ? (
-                            <span style={{ fontSize: "11.5px", color: C.red, fontWeight: 500 }}>Currently unavailable</span>
-                          ) : requested ? (
-                            <span style={{ fontSize: "12px", color: "#1E6E67", fontWeight: 500 }}>Requested</span>
-                          ) : (
-                            <>
-                              <div style={{ display: "flex", gap: "6px", marginBottom: "6px" }}>
-                                <input
-                                  type="number"
-                                  min="1"
-                                  value={qty}
-                                  onChange={(e) => setQuantities((prev) => ({ ...prev, [item.id]: Math.max(1, Number(e.target.value) || 1) }))}
-                                  disabled={disabled}
-                                  style={{ width: "42px", padding: "6px", borderRadius: "6px", border: `1px solid ${C.line}`, fontSize: "12px", textAlign: "center" }}
-                                />
-                                <input
-                                  value={cookingNotes[item.id] || ""}
-                                  onChange={(e) => setCookingNotes((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                                  placeholder="How prepared? (optional)"
-                                  disabled={disabled}
-                                  style={{ flex: 1, minWidth: 0, padding: "6px 8px", borderRadius: "6px", border: `1px solid ${C.line}`, fontSize: "11.5px", boxSizing: "border-box" }}
-                                />
-                              </div>
-                              <button
-                                disabled={disabled || sendingId === item.id}
-                                onClick={() => requestItem(item)}
-                                style={{
-                                  width: "100%", fontSize: "12.5px", border: "none", borderRadius: "6px", padding: "6px 0",
-                                  background: disabled ? C.line : C.clay, color: disabled ? C.inkSoft : "#fff",
-                                  cursor: disabled ? "default" : "pointer", opacity: sendingId === item.id ? 0.7 : 1
-                                }}
-                              >
-                                {sendingId === item.id ? "Sending…" : "Request"}
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  {guestServices.filter((item) => item.category === activeCategory).map((item) => {
-                    const requested = requestedIds.includes(item.id);
-                    const available = item.is_available !== false;
-                    const hasQuantity = item.category === "Laundry";
-                    const qty = quantities[item.id] || 1;
-                    const disabled = isExpired || !available;
-                    return (
-                      <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${C.line}`, gap: "10px", opacity: available ? 1 : 0.55 }}>
-                        <div>
-                          <div style={{ fontSize: "13.5px", fontWeight: 500 }}>{item.name}</div>
-                          <div style={{ fontSize: "12px", color: C.inkSoft }}>{item.price > 0 ? `TSh ${Number(item.price).toLocaleString()}` : "Free"}</div>
-                        </div>
-                        {!available ? (
-                          <span style={{ fontSize: "12px", color: C.red, fontWeight: 500, whiteSpace: "nowrap" }}>Currently unavailable</span>
-                        ) : requested ? (
-                          <span style={{ fontSize: "12.5px", color: "#1E6E67", fontWeight: 500, whiteSpace: "nowrap" }}>Requested</span>
-                        ) : (
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                            {hasQuantity && (
-                              <input
-                                type="number"
-                                min="1"
-                                value={qty}
-                                onChange={(e) => setQuantities((prev) => ({ ...prev, [item.id]: Math.max(1, Number(e.target.value) || 1) }))}
-                                disabled={disabled}
-                                style={{ width: "48px", padding: "6px", borderRadius: "6px", border: `1px solid ${C.line}`, fontSize: "12.5px", textAlign: "center" }}
-                              />
-                            )}
-                            <button
-                              disabled={disabled || sendingId === item.id}
-                              onClick={() => requestItem(item)}
-                              style={{
-                                fontSize: "12.5px", border: "none", borderRadius: "6px", padding: "6px 12px", whiteSpace: "nowrap",
-                                background: disabled ? C.line : C.clay, color: disabled ? C.inkSoft : "#fff",
-                                cursor: disabled ? "default" : "pointer", opacity: sendingId === item.id ? 0.7 : 1
-                              }}
-                            >
-                              {sendingId === item.id ? "Sending…" : "Request"}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </Panel>
+            {guestServices.some((s) => s.category === "Kitchen") && (
+              <Panel title="Kitchen menu">
+                <p style={{ fontSize: "13px", color: C.inkSoft, marginTop: 0, marginBottom: "14px" }}>
+                  Pick a quantity, add any notes on how you'd like it prepared, and send your order to the kitchen.
+                </p>
+                <KitchenOrderGrid
+                  items={guestServices.filter((item) => item.category === "Kitchen")}
+                  quantities={quantities}
+                  setQuantities={setQuantities}
+                  cookingNotes={cookingNotes}
+                  setCookingNotes={setCookingNotes}
+                  requestedIds={requestedIds}
+                  sendingId={sendingId}
+                  onRequest={requestItem}
+                  isExpired={isExpired}
+                />
+              </Panel>
+            )}
             <div style={{ height: "14px" }} />
+            <Panel title="Your kitchen orders">
+              <GuestRequestStatus
+                requests={myRequests.filter((r) => r.category === "Kitchen")}
+                isExpired={isExpired}
+                confirmingId={confirmingId}
+                onConfirm={confirmRequest}
+                emptyText="Nothing ordered from the kitchen yet this stay."
+              />
+            </Panel>
           </>
         )}
 
+        {/* Requests tab — ordering for everything that isn't Kitchen, plus the
+            full picture of every request across every category (Kitchen
+            included), so there's one place to check where everything stands. */}
+        {guestTab === "requests" && (
+          <>
+            {guestServices.some((s) => s.category !== "Kitchen") && (
+              <>
+                <Panel title="Order more">
+                  <div style={{ display: "flex", gap: "6px", marginBottom: "14px", flexWrap: "wrap" }}>
+                    {CATEGORY_ORDER.filter((cat) => cat !== "Kitchen" && guestServices.some((s) => s.category === cat)).map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => setActiveCategory(cat)}
+                        style={{
+                          fontSize: "12.5px", fontWeight: 500, border: `1px solid ${C.line}`, borderRadius: "999px",
+                          padding: "6px 13px", cursor: "pointer",
+                          background: activeCategory === cat ? C.ink : "none",
+                          color: activeCategory === cat ? "#fff" : C.inkSoft,
+                        }}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: "13px", color: C.inkSoft, marginTop: 0, marginBottom: "14px" }}>
+                    {(activeCategory === "Counter" || activeCategory === "Amenities") && "Tap to request any item — staff will bring it to your room."}
+                    {activeCategory === "Laundry" && "Pick a quantity per item — ironing is complimentary."}
+                  </p>
+                  <OtherServicesList
+                    items={guestServices.filter((item) => item.category === activeCategory)}
+                    quantities={quantities}
+                    setQuantities={setQuantities}
+                    requestedIds={requestedIds}
+                    sendingId={sendingId}
+                    onRequest={requestItem}
+                    isExpired={isExpired}
+                  />
+                </Panel>
+                <div style={{ height: "14px" }} />
+              </>
+            )}
+            <Panel title="Your requests">
+              <GuestRequestStatus
+                requests={myRequests}
+                isExpired={isExpired}
+                confirmingId={confirmingId}
+                onConfirm={confirmRequest}
+                emptyText="Nothing requested yet this stay."
+              />
+            </Panel>
+          </>
+        )}
+
+        {/* Front desk tab — airtime top-up. Messaging lives in the floating
+            composer now, always reachable regardless of which tab is open. */}
+        {guestTab === "frontdesk" && (
         <Panel title="Front desk">
           <div>
             <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px", color: C.ink }}>Airtime top-up</p>
@@ -4580,25 +4728,15 @@ function GuestApp({ onExit, initialCode }) {
             )}
           </div>
         </Panel>
-
-        <div style={{ display: "flex", justifyContent: "space-between", marginTop: "18px" }}>
-          <button onClick={switchGuest} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
-            Not you? Switch guest
-          </button>
-          {onExit && (
-            <button onClick={onExit} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
-              ← Choose a different portal
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
-      {/* Floating message composer — pinned to the bottom of the screen so a
-          guest never has to scroll past everything else just to say something
+      {/* Floating message composer — pinned just above the tab bar so a guest
+          never has to scroll past everything else just to say something
           urgent. Same width as the rest of the content, centered, one line
           plus Send. Hidden entirely when printing, and disabled (not hidden)
           once access has expired. */}
-      <div className="no-print" style={{ position: "fixed", left: 0, right: 0, bottom: 0, display: "flex", justifyContent: "center", padding: "12px 20px", pointerEvents: "none" }}>
+      <div className="no-print" style={{ position: "fixed", left: 0, right: 0, bottom: "58px", display: "flex", justifyContent: "center", padding: "0 20px 8px", pointerEvents: "none" }}>
         <div style={{
           width: "min(420px, 100%)", display: "flex", gap: "8px", alignItems: "center",
           background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "999px",
@@ -4631,12 +4769,18 @@ function GuestApp({ onExit, initialCode }) {
         </div>
       </div>
       {customSent && (
-        <div className="no-print" style={{ position: "fixed", left: 0, right: 0, bottom: "68px", display: "flex", justifyContent: "center", pointerEvents: "none" }}>
+        <div className="no-print" style={{ position: "fixed", left: 0, right: 0, bottom: "126px", display: "flex", justifyContent: "center", pointerEvents: "none" }}>
           <span style={{ fontSize: "12px", color: "#1E6E67", background: C.signalSoft, padding: "4px 12px", borderRadius: "999px" }}>
             Sent — the front desk has been notified.
           </span>
         </div>
       )}
+
+      <GuestTabBar
+        active={guestTab}
+        onChange={setGuestTab}
+        requestBadge={myRequests.filter((r) => !isRequestSettled(r)).length}
+      />
     </div>
   );
 }
