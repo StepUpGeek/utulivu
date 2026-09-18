@@ -53,6 +53,10 @@ const mapClient = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, phone
 const mapService = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, price: r.price, category: r.category, billingUnit: r.billing_unit || "flat" });
 const mapBooking = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, serviceIds: r.service_ids || [], checkIn: r.check_in, checkOut: r.check_out, checkInTime: r.check_in_time || null, checkOutTime: r.check_out_time || null, status: r.status, roomNumber: r.room_number || "", roomId: r.room_id || null, isTemporary: r.is_temporary || false });
 const mapInvoice = (r) => ({ id: r.id, branchId: r.branch_id, bookingId: r.booking_id, amount: r.amount, status: r.status, paidAt: r.paid_at || null });
+// A payment row is one payment OR refund event against a booking's invoice —
+// amount is positive for a payment, negative for a refund, so a plain sum
+// across a booking's rows is always the true amount collected so far.
+const mapPayment = (r) => ({ id: r.id, branchId: r.branch_id, bookingId: r.booking_id, amount: Number(r.amount) || 0, kind: r.kind || "payment", note: r.note || null, paidAt: r.paid_at, recordedBy: r.recorded_by || null });
 const mapExpense = (r) => ({ id: r.id, branchId: r.branch_id, description: r.description, amount: Number(r.amount) || 0, createdAt: r.created_at });
 const mapInquiry = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, message: r.message, status: r.status });
 const mapTag = (r) => ({ id: r.id, branchId: r.branch_id, label: r.label, type: r.type, linkedName: r.linked_name, lastScan: r.last_scan });
@@ -213,6 +217,7 @@ const FAILED_ACTION_LABELS = {
   deleteBooking: "Deleting a booking",
   deleteClient: "Deleting a client",
   addExpense: "Adding an expense",
+  addPayment: "Recording a payment",
 };
 
 function rateForRoom(room, roomRates) {
@@ -286,6 +291,22 @@ function computeInvoiceAmount(booking, roomsList, roomRatesList, servicesList) {
     return sum + svc.price * qty;
   }, 0);
   return accommodationAmount + servicesAmount;
+}
+
+// A single source of truth for "how much has actually been paid, and is this
+// invoice settled" — paid/outstanding/partial are always computed from the
+// payment rows themselves rather than a manually-set status, so the two can
+// never disagree. Void stays the one manually-set status, since it's a
+// deliberate write-off independent of what's actually been paid.
+function invoiceBalance(invoice, allPayments) {
+  if (!invoice) return { paid: 0, remaining: 0, status: "outstanding" };
+  if (invoice.status === "void") return { paid: 0, remaining: 0, status: "void" };
+  const paid = allPayments
+    .filter((p) => p.bookingId === invoice.bookingId)
+    .reduce((sum, p) => sum + p.amount, 0);
+  const remaining = Math.max(0, invoice.amount - paid);
+  const status = paid <= 0 ? "outstanding" : remaining <= 0 ? "paid" : "partial";
+  return { paid, remaining, status };
 }
 
 function useIsMobile() {
@@ -396,36 +417,13 @@ function StatusPicker({ value, onChange }) {
   );
 }
 
-const INVOICE_STATUSES = ["outstanding", "paid", "void"];
-
-function InvoiceStatusPicker({ value, onChange, options = INVOICE_STATUSES }) {
-  const tones = {
-    outstanding: { bg: "#F3DEDE", fg: C.red },
-    paid: { bg: C.signalSoft, fg: "#1E6E67" },
-    void: { bg: C.line, fg: C.inkSoft },
-  };
-  const t = tones[value] || tones.outstanding;
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="ws"
-      style={{
-        background: t.bg, color: t.fg, fontSize: "12.5px", fontWeight: 500,
-        padding: "4px 8px", borderRadius: "999px", border: "none", cursor: "pointer",
-      }}
-    >
-      {options.map((s) => <option key={s} value={s}>{s}</option>)}
-    </select>
-  );
-}
-
 const PILL_TONES = {
   pending: { bg: "#F3E7CE", fg: "#8A6A1E" },
   confirmed: { bg: C.signalSoft, fg: "#1E6E67" },
   completed: { bg: "#E4E9F3", fg: "#3A4E8A" },
   cancelled: { bg: "#F3DEDE", fg: C.red },
   outstanding: { bg: "#F3DEDE", fg: C.red },
+  partial: { bg: "#FCEFD9", fg: C.clayDeep },
   paid: { bg: C.signalSoft, fg: "#1E6E67" },
   void: { bg: C.line, fg: C.inkSoft },
   new: { bg: "#E4E9F3", fg: "#3A4E8A" },
@@ -1024,6 +1022,72 @@ function StaffOrderModal({ bookings, rooms, clientName, services, onClose, onSav
   );
 }
 
+// Records either a payment or a refund against an invoice. Refunds require a
+// short note — there's no automatic proration logic, so the note is the only
+// record of *why* money went back once the number is entered.
+function PaymentModal({ invoice, kind, balance, onClose, onSave }) {
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const isRefund = kind === "refund";
+  const numericAmount = Number(amount);
+  const canSave = amount && numericAmount > 0 && (!isRefund || note.trim().length > 0);
+
+  async function handleSave() {
+    setSaving(true);
+    const ok = await onSave({ amount: isRefund ? -Math.abs(numericAmount) : Math.abs(numericAmount), note: note.trim() || null, kind });
+    setSaving(false);
+    if (ok) onClose();
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(22,35,59,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
+      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(340px, 92vw)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <h3 className="fr" style={{ margin: 0, fontSize: "19px" }}>{isRefund ? "Issue a refund" : "Record a payment"}</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={18} /></button>
+        </div>
+
+        <p style={{ fontSize: "12.5px", color: C.inkSoft, margin: "0 0 16px" }}>
+          {money(balance.paid)} paid of {money(invoice.amount)} · {money(balance.remaining)} remaining
+        </p>
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Amount</label>
+        <input
+          type="number"
+          min="0"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          placeholder={isRefund ? "Amount to refund" : "Amount received"}
+          autoFocus
+          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px", boxSizing: "border-box" }}
+        />
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>{isRefund ? "Reason (required)" : "Note (optional)"}</label>
+        <input
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder={isRefund ? "e.g. early checkout — 2 nights refunded" : "e.g. deposit, cash on arrival"}
+          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 18px", fontSize: "14px", boxSizing: "border-box" }}
+        />
+
+        <button
+          disabled={!canSave || saving}
+          onClick={handleSave}
+          style={{
+            width: "100%", background: canSave ? (isRefund ? C.red : C.ink) : C.line, color: canSave ? "#fff" : C.inkSoft,
+            border: "none", borderRadius: "8px", padding: "11px", fontSize: "14.5px",
+            cursor: canSave && !saving ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
+            opacity: saving ? 0.7 : 1
+          }}
+        >
+          <Check size={16} /> {saving ? "Saving…" : isRefund ? "Issue refund" : "Save payment"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
   const [role, setRole] = useState(null); // 'owner' | 'manager' | 'staff' | null while loading
@@ -1040,6 +1104,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [rooms, setRooms] = useState([]);
   const [roomRates, setRoomRates] = useState([]);
   const [expenses, setExpenses] = useState([]);
+  const [payments, setPayments] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
 
   const [showBranchMenu, setShowBranchMenu] = useState(false);
@@ -1053,6 +1118,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [generatedCode, setGeneratedCode] = useState(null);
   const [printInvoice, setPrintInvoice] = useState(null);
   const [editingBooking, setEditingBooking] = useState(null);
+  const [paymentModal, setPaymentModal] = useState(null); // { invoice, kind: "payment" | "refund" }
   const [teamMembers, setTeamMembers] = useState([]);
   const [teamLoading, setTeamLoading] = useState(false);
   const isMobile = useIsMobile();
@@ -1068,7 +1134,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [syncFailures, setSyncFailures] = useState([]);
   const [showSyncFailures, setShowSyncFailures] = useState(false);
 
-  function applyFetchedData(b, c, s, bk, inv, iq, t, rm, rr, ex) {
+  function applyFetchedData(b, c, s, bk, inv, iq, t, rm, rr, ex, pm) {
     const mapped = {
       branches: b ? b.map(mapBranch) : [],
       clients: c ? c.map(mapClient) : [],
@@ -1080,6 +1146,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       rooms: rm ? rm.map(mapRoom) : [],
       roomRates: rr ? rr.map(mapRoomRate) : [],
       expenses: ex ? ex.map(mapExpense) : [],
+      payments: pm ? pm.map(mapPayment) : [],
     };
     setBranches(mapped.branches);
     setClients(mapped.clients);
@@ -1091,6 +1158,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     setRooms(mapped.rooms);
     setRoomRates(mapped.roomRates);
     setExpenses(mapped.expenses);
+    setPayments(mapped.payments);
     setBranchId((prev) => prev || mapped.branches[0]?.id || null);
     saveCache(mapped);
     setUsingCache(false);
@@ -1098,7 +1166,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
   async function fetchAll() {
     try {
-      const [b, c, s, bk, inv, iq, t, rm, rr, ex] = await Promise.all([
+      const [b, c, s, bk, inv, iq, t, rm, rr, ex, pm] = await Promise.all([
         supabase.from("branches").select("*"),
         supabase.rpc("get_clients"), // owner-only fields (id_type/id_number) come back null for staff
         supabase.from("services").select("*"),
@@ -1109,10 +1177,11 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         supabase.from("rooms").select("*"),
         supabase.from("room_rates").select("*"),
         supabase.from("expenses").select("*"),
+        supabase.from("payments").select("*"),
       ]);
-      const firstError = [b, c, s, bk, inv, iq, t, rm, rr, ex].find((r) => r.error)?.error;
+      const firstError = [b, c, s, bk, inv, iq, t, rm, rr, ex, pm].find((r) => r.error)?.error;
       if (firstError) throw firstError;
-      applyFetchedData(b.data, c.data, s.data, bk.data, inv.data, iq.data, t.data, rm.data, rr.data, ex.data);
+      applyFetchedData(b.data, c.data, s.data, bk.data, inv.data, iq.data, t.data, rm.data, rr.data, ex.data, pm.data);
       setIsOnline(true);
     } catch (e) {
       // No connection (or Supabase unreachable) — fall back to whatever we last cached locally.
@@ -1128,6 +1197,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         setRooms(cached.rooms || []);
         setRoomRates(cached.roomRates || []);
         setExpenses(cached.expenses || []);
+        setPayments(cached.payments || []);
         setBranchId((prev) => prev || cached.branches?.[0]?.id || null);
         setUsingCache(true);
       }
@@ -1181,6 +1251,9 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         } else if (action.type === "addExpense") {
           const { error } = await supabase.from("expenses").insert(action.payload);
           if (error) throw error;
+        } else if (action.type === "addPayment") {
+          const { error } = await supabase.from("payments").insert(action.payload);
+          if (error) throw error;
         } else if (action.type === "editBooking") {
           const { error } = await supabase.from("bookings").update(action.payload.updates).eq("id", action.payload.id);
           if (error) throw error;
@@ -1208,6 +1281,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           if (action.tempId) {
             if (action.type === "addClient") setClients((prev) => prev.filter((c) => c.id !== action.tempId));
             if (action.type === "addBooking") setBookings((prev) => prev.filter((b) => b.id !== action.tempId));
+            if (action.type === "addPayment") setPayments((prev) => prev.filter((p) => p.id !== action.tempId));
           }
         } else {
           hadTransientFailure = true;
@@ -1313,12 +1387,24 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
       })
       .subscribe();
 
+    // Same idea for payments — a payment recorded from a different staff
+    // session or device should update everyone's view of the balance without
+    // a manual refresh. Payments are never edited or deleted once recorded
+    // (a mistake gets corrected with another entry), so only INSERT matters.
+    const paymentsChannel = supabase
+      .channel("payments_live")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "payments" }, (payload) => {
+        setPayments((prev) => (prev.some((p) => p.id === payload.new.id) ? prev : [...prev, mapPayment(payload.new)]));
+      })
+      .subscribe();
+
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
       supabase.removeChannel(requestsChannel);
       supabase.removeChannel(bookingsChannel);
       supabase.removeChannel(invoicesChannel);
+      supabase.removeChannel(paymentsChannel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
@@ -1395,11 +1481,15 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
   // Lifetime bookings count + total paid spend for a client — shown inline
   // on their card, and behind the "View history" link for the full list.
+  // "Spend" is now the actual sum of payments (refunds already subtract,
+  // since those are stored as negative amounts) across their bookings,
+  // rather than the full amount of invoices someone once marked "paid".
   function clientStats(clientId) {
     const clientBookings = bookings.filter((b) => b.clientId === clientId);
-    const totalSpend = invoices
-      .filter((v) => v.status === "paid" && clientBookings.some((b) => b.id === v.bookingId))
-      .reduce((sum, v) => sum + v.amount, 0);
+    const bookingIds = new Set(clientBookings.map((b) => b.id));
+    const totalSpend = payments
+      .filter((p) => bookingIds.has(p.bookingId))
+      .reduce((sum, p) => sum + p.amount, 0);
     return { bookingCount: clientBookings.length, totalSpend, clientBookings };
   }
 
@@ -1423,24 +1513,36 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     return bk.roomNumber || "—";
   };
 
-  const revenue = bInvoices.filter((v) => v.status === "paid").reduce((sum, v) => sum + v.amount, 0);
-  const outstanding = bInvoices.filter((v) => v.status === "outstanding").reduce((sum, v) => sum + v.amount, 0);
-
   const bExpenses = inBranch(expenses);
+  const bPayments = inBranch(payments);
+  const paidForBooking = (bookingId) => bPayments.filter((p) => p.bookingId === bookingId).reduce((sum, p) => sum + p.amount, 0);
+
+  // "Collected" is simply every payment (and refund, since those are already
+  // negative) recorded in this branch — a direct cash figure rather than
+  // something derived from invoice status. "Outstanding" is what's still
+  // owed on every non-void invoice, using the same paid-so-far figure that
+  // powers the balance shown on each invoice.
+  const revenue = bPayments.reduce((sum, p) => sum + p.amount, 0);
+  const outstanding = bInvoices
+    .filter((v) => v.status !== "void")
+    .reduce((sum, v) => sum + Math.max(0, v.amount - paidForBooking(v.bookingId)), 0);
 
   // Dashboard "today" figures — separate from Finance's all-time revenue/
   // outstanding above, since these answer a different question ("what
-  // happened today") rather than "what's the running total ever."
+  // happened today") rather than "what's the running total ever." Basing
+  // revenueToday on payments (not invoices) is what keeps a deposit-and-
+  // balance split across two different days honest — each payment counts
+  // on the day it actually happened, not the day the booking was made.
   const today = todayStr();
   const activeBookingsToday = bBookings.filter((b) => isBookingActiveOn(b, today));
   const occupiedRoomIdsToday = new Set(activeBookingsToday.map((b) => b.roomId).filter(Boolean));
   const roomsAvailableToday = bRooms.length - occupiedRoomIdsToday.size;
-  const revenueToday = bInvoices
-    .filter((v) => v.paidAt && v.paidAt.slice(0, 10) === today)
-    .reduce((sum, v) => sum + v.amount, 0);
+  const revenueToday = bPayments
+    .filter((p) => p.paidAt && p.paidAt.slice(0, 10) === today)
+    .reduce((sum, p) => sum + p.amount, 0);
   const outstandingToday = bInvoices
-    .filter((v) => v.status === "outstanding" && bBookings.some((bk) => bk.id === v.bookingId && isBookingActiveOn(bk, today)))
-    .reduce((sum, v) => sum + v.amount, 0);
+    .filter((v) => v.status !== "void" && bBookings.some((bk) => bk.id === v.bookingId && isBookingActiveOn(bk, today)))
+    .reduce((sum, v) => sum + Math.max(0, v.amount - paidForBooking(v.bookingId)), 0);
 
   async function simulateTap(tagId) {
     const tag = tags.find((t) => t.id === tagId);
@@ -1579,52 +1681,85 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     return !error;
   }
 
-  async function updateInvoiceStatus(id, status) {
-    // Staff can close out an invoice as paid, no owner needed. Manager can do
-    // anything except void — that's the one direction that erases money owed,
-    // and stays a deliberate owner-only write-off.
-    // (This must also be allowed server-side — see the accompanying SQL note.)
-    const allowed =
-      role === "owner" ||
-      (role === "manager" && status !== "void") ||
-      (role === "staff" && status === "paid");
-    if (!allowed) return;
-    setInvoices((prev) => prev.map((v) => (v.id === id ? { ...v, status } : v)));
+  // Voiding is the one financial action that erases money owed rather than
+  // recording more of it, so it stays a deliberate owner-only write-off —
+  // paid/outstanding/partial are never set directly, only ever derived from
+  // the payments actually recorded (see invoiceBalance).
+  async function voidInvoice(id) {
+    if (role !== "owner") return;
+    setInvoices((prev) => prev.map((v) => (v.id === id ? { ...v, status: "void" } : v)));
     try {
-      const { error } = await supabase.from("invoices").update({ status }).eq("id", id);
+      const { error } = await supabase.from("invoices").update({ status: "void" }).eq("id", id);
       if (error) throw error;
     } catch (e) {
-      enqueueAction({ type: "updateInvoiceStatus", payload: { id, status } });
+      enqueueAction({ type: "updateInvoiceStatus", payload: { id, status: "void" } });
       setPendingCount(queueCount());
     }
   }
 
-  // Shared invoice control used on both the Bookings and Finance tabs so
-  // marking a payment works the same wherever staff happen to be. Owner gets
-  // the full picker (paid/outstanding/void). Manager gets the same picker
-  // minus "void" — unless it's already void, in which case that's shown
-  // read-only rather than a dropdown that can't represent its own value.
-  // Staff get a status pill plus a one-tap "Mark paid" button while outstanding.
+  // Any signed-in role can record an ordinary payment — this is what used to
+  // be "mark paid", just now backed by a real amount instead of a flipped
+  // status. A refund (a negative amount) stays owner-only, mirroring void;
+  // this is also enforced server-side by the payments table's RLS policy.
+  async function recordPayment({ amount, note, kind }) {
+    if (!paymentModal) return false;
+    if (kind === "refund" && role !== "owner") return false;
+    const invoice = paymentModal.invoice;
+    const id = newId();
+    const payload = { id, branch_id: branchId, booking_id: invoice.bookingId, amount, kind, note: note || null, recorded_by: session.user.id };
+    setPayments((prev) => [...prev, mapPayment({ ...payload, paid_at: new Date().toISOString() })]);
+    try {
+      const { error } = await supabase.from("payments").insert(payload);
+      if (error) throw error;
+    } catch (e) {
+      enqueueAction({ type: "addPayment", payload, tempId: id });
+      setPendingCount(queueCount());
+    }
+    return true;
+  }
+
+  // Shared invoice control used on the Bookings tab, Finance tab, and client
+  // history — a live balance (paid so far / remaining) plus whichever actions
+  // the signed-in role can take. Everyone can record a payment; only the
+  // owner can issue a refund or void, matching how void already worked.
   function invoiceControl(invoice) {
     if (!invoice) return <span style={{ fontSize: "12.5px", color: C.inkSoft }}>—</span>;
-    if (role === "owner") {
-      return <InvoiceStatusPicker value={invoice.status} onChange={(s) => updateInvoiceStatus(invoice.id, s)} />;
-    }
-    if (role === "manager") {
-      if (invoice.status === "void") return <Pill tone="void">void</Pill>;
-      return <InvoiceStatusPicker value={invoice.status} onChange={(s) => updateInvoiceStatus(invoice.id, s)} options={["outstanding", "paid"]} />;
+    const balance = invoiceBalance(invoice, payments);
+    if (balance.status === "void") {
+      return <Pill tone="void">void</Pill>;
     }
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        <Pill tone={invoice.status}>{invoice.status}</Pill>
-        {invoice.status === "outstanding" && (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "5px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <Pill tone={balance.status}>{balance.status}</Pill>
+          <span style={{ fontSize: "11.5px", color: C.inkSoft, whiteSpace: "nowrap" }}>
+            {money(balance.paid)} of {money(invoice.amount)}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
           <button
-            onClick={() => updateInvoiceStatus(invoice.id, "paid")}
+            onClick={() => setPaymentModal({ invoice, kind: "payment" })}
             style={{ fontSize: "12px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "4px 10px", cursor: "pointer" }}
           >
-            Mark paid
+            Record payment
           </button>
-        )}
+          {role === "owner" && (
+            <>
+              <button
+                onClick={() => setPaymentModal({ invoice, kind: "refund" })}
+                style={{ fontSize: "12px", border: `1px solid ${C.line}`, background: "none", color: C.red, borderRadius: "6px", padding: "4px 10px", cursor: "pointer" }}
+              >
+                Refund
+              </button>
+              <button
+                onClick={() => voidInvoice(invoice.id)}
+                style={{ fontSize: "12px", border: "none", background: "none", color: C.inkSoft, borderRadius: "6px", padding: "4px 6px", cursor: "pointer" }}
+              >
+                Void
+              </button>
+            </>
+          )}
+        </div>
       </div>
     );
   }
@@ -1659,11 +1794,13 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     }
 
     // Keep the invoice amount live while nothing's final yet — the moment a
-    // booking is confirmed or its invoice moves off "outstanding" (paid, or
-    // voided by cancellation), this stops touching it.
+    // booking is confirmed, or the invoice is voided, this stops touching it.
+    // "Outstanding" is no longer a status invoices sit in on purpose (that's
+    // derived from payments now) — void is the only status this needs to
+    // check for.
     const bk = bookings.find((b) => b.id === id);
     const inv = invoices.find((v) => v.bookingId === id);
-    if (bk && bk.status === "pending" && inv && inv.status === "outstanding") {
+    if (bk && bk.status === "pending" && inv && inv.status !== "void") {
       const newAmount = computeInvoiceAmount(updates, rooms, roomRates, services);
       if (newAmount !== inv.amount) {
         setInvoices((prev) => prev.map((v) => (v.id === inv.id ? { ...v, amount: newAmount } : v)));
@@ -1722,6 +1859,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     const entry = {
       code,
       branch_id: branchId,
+      booking_id: bk.id,
       guest_name: clientName(bk.clientId),
       room_number: room ? room.roomNumber : (bk.roomNumber || null),
       room_type: room ? room.roomType : null,
@@ -2301,7 +2439,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                   <tbody>
                     {bInvoices.map((v) => {
                       const bk = bookings.find((b) => b.id === v.bookingId);
-                      const unpaidAfterCheckout = bk?.status === "completed" && v.status === "outstanding";
+                      const unpaidAfterCheckout = bk?.status === "completed" && invoiceBalance(v, payments).remaining > 0;
                       return (
                         <tr key={v.id} style={{ borderTop: `1px solid ${C.line}` }}>
                           <td style={{ padding: "10px 0" }}>{bk ? clientName(bk.clientId) : "—"}</td>
@@ -2416,6 +2554,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           services={services}
           rooms={rooms}
           roomRates={roomRates}
+          payments={payments}
           onClose={() => setPrintInvoice(null)}
         />
       )}
@@ -2563,6 +2702,17 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
             setGeneratedCode(null);
             onJumpToGuest(code);
           }}
+        />
+      )}
+
+      {/* Record a payment or refund against an invoice */}
+      {paymentModal && (
+        <PaymentModal
+          invoice={paymentModal.invoice}
+          kind={paymentModal.kind}
+          balance={invoiceBalance(paymentModal.invoice, payments)}
+          onClose={() => setPaymentModal(null)}
+          onSave={recordPayment}
         />
       )}
     </div>
@@ -3130,13 +3280,15 @@ function AddBookingModal({ clients, services, rooms, roomRates, existingBookings
    shows only the invoice itself (everything else on the page
    is hidden via the print stylesheet below).
 --------------------------------------------------------- */
-function InvoicePrintModal({ data, branch, clientName, serviceNames, services, rooms, roomRates, onClose }) {
+function InvoicePrintModal({ data, branch, clientName, serviceNames, services, rooms, roomRates, payments, onClose }) {
   const { invoice, booking } = data;
   const room = booking ? rooms.find((r) => r.id === booking.roomId) : null;
   const nights = booking ? nightsBetween(booking.checkIn, booking.checkOut) : 1;
-  const accommodationTotal = rateForRoom(room, roomRates) * nights;
+  const accommodationTotal = booking?.isTemporary ? TEMP_STAY.rate : rateForRoom(room, roomRates) * nights;
   const lines = booking ? booking.serviceIds.map((id) => services.find((s) => s.id === id)).filter(Boolean) : [];
   const today = new Date().toLocaleDateString([], { dateStyle: "medium" });
+  const balance = invoiceBalance(invoice, payments);
+  const bookingPayments = booking ? payments.filter((p) => p.bookingId === booking.id) : [];
 
   return (
     <div style={{
@@ -3183,7 +3335,9 @@ function InvoicePrintModal({ data, branch, clientName, serviceNames, services, r
             <tbody>
               {room && (
                 <tr style={{ borderBottom: `1px solid ${C.line}` }}>
-                  <td style={{ padding: "7px 0" }}>{room.roomType} room ({room.roomNumber}){nights > 1 ? ` × ${nights} nights` : ""}</td>
+                  <td style={{ padding: "7px 0" }}>
+                    {room.roomType} room ({room.roomNumber}){booking?.isTemporary ? " · temporary stay" : nights > 1 ? ` × ${nights} nights` : ""}
+                  </td>
                   <td style={{ padding: "7px 0", textAlign: "right" }}>{money(accommodationTotal)}</td>
                 </tr>
               )}
@@ -3205,8 +3359,38 @@ function InvoicePrintModal({ data, branch, clientName, serviceNames, services, r
             <span className="fr" style={{ fontSize: "15px", fontWeight: 500 }}>Total</span>
             <span className="fr" style={{ fontSize: "18px", fontWeight: 500 }}>{money(invoice.amount)}</span>
           </div>
-          <div style={{ marginTop: "8px" }}>
-            <Pill tone={invoice.status}>{invoice.status}</Pill>
+
+          {/* Full payment history — every payment and refund recorded against
+              this booking, in order, so the printed invoice doubles as an
+              audit trail rather than just a single status stamp. */}
+          {bookingPayments.length > 0 && (
+            <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: `1px dashed ${C.line}` }}>
+              <div style={{ fontSize: "12px", color: C.inkSoft, marginBottom: "6px" }}>Payments</div>
+              {bookingPayments
+                .slice()
+                .sort((a, b) => new Date(a.paidAt) - new Date(b.paidAt))
+                .map((p) => (
+                  <div key={p.id} style={{ display: "flex", justifyContent: "space-between", fontSize: "12.5px", padding: "3px 0" }}>
+                    <span>
+                      {new Date(p.paidAt).toLocaleDateString([], { dateStyle: "medium" })}
+                      {p.kind === "refund" ? " · refund" : ""}
+                      {p.note ? ` — ${p.note}` : ""}
+                    </span>
+                    <span>{p.amount < 0 ? "-" : ""}{money(Math.abs(p.amount))}</span>
+                  </div>
+                ))}
+            </div>
+          )}
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "10px", paddingTop: "8px", borderTop: `1px solid ${C.line}` }}>
+            <span style={{ fontSize: "13px", fontWeight: 500 }}>{balance.status === "void" ? "Status" : "Balance due"}</span>
+            {balance.status === "void" ? (
+              <Pill tone="void">void</Pill>
+            ) : (
+              <span className="fr" style={{ fontSize: "16px", fontWeight: 500, color: balance.remaining > 0 ? C.red : "#1E6E67" }}>
+                {money(balance.remaining)}
+              </span>
+            )}
           </div>
         </div>
 
@@ -3491,6 +3675,7 @@ function GuestApp({ onExit, initialCode }) {
   const [customSent, setCustomSent] = useState(false);
   const [myRequests, setMyRequests] = useState([]);
   const [confirmingId, setConfirmingId] = useState(null);
+  const [paidSoFar, setPaidSoFar] = useState(0);
 
   useEffect(() => {
     if (startCode) lookup(startCode, { silent: Boolean(!initialCode && savedCode) });
@@ -3530,10 +3715,25 @@ function GuestApp({ onExit, initialCode }) {
     if (data) setMyRequests(data);
   }
 
+  // The guest's running balance — how much has actually been paid against
+  // this stay, fetched live rather than relying on the invoice_amount snapshot
+  // taken when the code was generated (payments recorded afterward wouldn't
+  // otherwise show up here). Same guarded-RPC pattern as fetchMyRequests, so a
+  // guest never gets read access to the payments table directly.
+  async function fetchMyBalance() {
+    if (!session?.access?.code) return;
+    const { data } = await supabase.rpc("get_my_balance", { p_code: session.access.code });
+    if (typeof data === "number") setPaidSoFar(data);
+  }
+
   useEffect(() => {
     if (!session?.access?.code) return;
     fetchMyRequests();
-    const interval = setInterval(fetchMyRequests, 12000);
+    fetchMyBalance();
+    const interval = setInterval(() => {
+      fetchMyRequests();
+      fetchMyBalance();
+    }, 12000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
@@ -3664,6 +3864,7 @@ function GuestApp({ onExit, initialCode }) {
   const expiresLabel = new Date(access.expires_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
   const ordersTotal = myRequests.reduce((sum, r) => sum + (r.amount || 0), 0);
   const grandTotal = (access.invoice_amount || 0) + ordersTotal;
+  const remainingBalance = Math.max(0, grandTotal - paidSoFar);
   // First name only — warm without guessing at a title the booking never recorded.
   const guestFirstName = (access.guest_name || "").trim().split(" ")[0] || "there";
 
@@ -3737,10 +3938,7 @@ function GuestApp({ onExit, initialCode }) {
                         <span style={{ fontSize: "13.5px" }}>
                           Room {access.room_number || "—"}{access.room_type ? ` · ${access.room_type}` : ""}
                         </span>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
-                          <span style={{ fontSize: "13.5px" }}>{money(access.invoice_amount)}</span>
-                          <Pill tone={access.invoice_status}>{access.invoice_status}</Pill>
-                        </div>
+                        <span style={{ fontSize: "13.5px", flexShrink: 0 }}>{money(access.invoice_amount)}</span>
                       </div>
                     </>
                   )}
@@ -3764,6 +3962,20 @@ function GuestApp({ onExit, initialCode }) {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "12px", paddingTop: "10px", borderTop: `2px solid ${C.ink}` }}>
                     <span style={{ fontSize: "13px", fontWeight: 500 }}>Grand total</span>
                     <span className="fr" style={{ fontSize: "19px", fontWeight: 500 }}>{money(grandTotal)}</span>
+                  </div>
+                  {paidSoFar > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px" }}>
+                      <span style={{ fontSize: "12.5px", color: C.inkSoft }}>Paid so far</span>
+                      <span style={{ fontSize: "13.5px" }}>{money(paidSoFar)}</span>
+                    </div>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "6px" }}>
+                    <span style={{ fontSize: "12.5px", fontWeight: 500, color: remainingBalance > 0 ? C.red : "#1E6E67" }}>
+                      {remainingBalance > 0 ? "Remaining balance" : "Fully paid"}
+                    </span>
+                    {remainingBalance > 0 && (
+                      <span style={{ fontSize: "14px", fontWeight: 500, color: C.red }}>{money(remainingBalance)}</span>
+                    )}
                   </div>
                 </>
               )}
