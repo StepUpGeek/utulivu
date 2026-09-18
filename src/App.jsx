@@ -3676,11 +3676,26 @@ function GuestApp({ onExit, initialCode }) {
   const [myRequests, setMyRequests] = useState([]);
   const [confirmingId, setConfirmingId] = useState(null);
   const [paidSoFar, setPaidSoFar] = useState(0);
+  const [hasStayedBefore, setHasStayedBefore] = useState(false);
 
   useEffect(() => {
     if (startCode) lookup(startCode, { silent: Boolean(!initialCode && savedCode) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Whether this guest — matched by phone number, not name, since a name can
+  // be retyped slightly differently on a later visit — has any other booking
+  // on record. Fetched once per session rather than polled: it can't change
+  // during the course of a single stay, unlike requests or the running
+  // balance. Defaults to false on any error or missing link, since claiming
+  // false familiarity is worse than just saying a plain "Welcome".
+  useEffect(() => {
+    if (!session?.access?.code) return;
+    supabase
+      .rpc("get_guest_stay_count", { p_code: session.access.code })
+      .then(({ data }) => setHasStayedBefore(typeof data === "number" && data > 0));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
 
   const CATEGORY_ORDER = ["Kitchen", "Counter", "Amenities", "Laundry"];
 
@@ -3887,7 +3902,7 @@ function GuestApp({ onExit, initialCode }) {
       {FONTS}
       <div style={{ width: "min(420px, 100%)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
-          <h1 className="fr" style={{ margin: 0, fontSize: "22px", fontWeight: 500 }}>Welcome back, {guestFirstName}</h1>
+          <h1 className="fr" style={{ margin: 0, fontSize: "22px", fontWeight: 500 }}>{hasStayedBefore ? "Welcome back" : "Welcome"}, {guestFirstName}</h1>
           <span style={{
             fontSize: "12.5px", fontWeight: 500, padding: "3px 10px", borderRadius: "999px",
             background: isExpired ? "#F3DEDE" : C.signalSoft, color: isExpired ? C.red : "#1E6E67"
