@@ -5,7 +5,7 @@ import {
   LayoutGrid, CalendarDays, Users, MessageSquareText, Wrench,
   Radio, Wallet, Building2, ChevronDown, ChevronUp, Plus, X, Check, Bell, Menu, Shield,
   Bed, BedSingle, BedDouble, Sparkles, Crown, Moon, Sun,
-  UtensilsCrossed, ShoppingBag, Shirt
+  UtensilsCrossed, ShoppingBag, Shirt, ImageOff, Upload, Pencil, ArrowUp
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -50,7 +50,7 @@ const FONTS = (
 --------------------------------------------------------- */
 const mapBranch = (r) => ({ id: r.id, name: r.name, location: r.location });
 const mapClient = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, phone: r.phone, idType: r.id_type || null, idNumber: r.id_number || null });
-const mapService = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, price: r.price, category: r.category, billingUnit: r.billing_unit || "flat" });
+const mapService = (r) => ({ id: r.id, branchId: r.branch_id, name: r.name, price: r.price, category: r.category, billingUnit: r.billing_unit || "flat", imageUrl: r.image_url || null, isAvailable: r.is_available !== false });
 const mapBooking = (r) => ({ id: r.id, branchId: r.branch_id, clientId: r.client_id, serviceIds: r.service_ids || [], checkIn: r.check_in, checkOut: r.check_out, checkInTime: r.check_in_time || null, checkOutTime: r.check_out_time || null, status: r.status, roomNumber: r.room_number || "", roomId: r.room_id || null, isTemporary: r.is_temporary || false });
 const mapInvoice = (r) => ({ id: r.id, branchId: r.branch_id, bookingId: r.booking_id, amount: r.amount, status: r.status, paidAt: r.paid_at || null });
 // A payment row is one payment OR refund event against a booking's invoice —
@@ -1088,6 +1088,179 @@ function PaymentModal({ invoice, kind, balance, onClose, onSave }) {
   );
 }
 
+// Create, edit, or delete a service — the catalog behind both the booking-
+// time add-on checklist and the guest-portal request menu. Category picks
+// from the four guest-request categories (Kitchen/Counter/Amenities/
+// Laundry) or a free-typed "Other" for booking-time add-ons like Transport,
+// which aren't guest self-serve requests at all. The availability checkbox
+// here is the same one-click toggle exposed on each row of the catalog
+// table — this modal just also lets it be set at creation time.
+function ServiceModal({ service, branchId, onClose, onSave, onDelete }) {
+  const isEdit = Boolean(service);
+  const startsCustom = isEdit && !GUEST_REQUEST_CATEGORIES.includes(service.category);
+  const [name, setName] = useState(service?.name || "");
+  const [categoryChoice, setCategoryChoice] = useState(startsCustom ? "custom" : (service?.category || "Kitchen"));
+  const [customCategory, setCustomCategory] = useState(startsCustom ? service.category : "");
+  const [price, setPrice] = useState(service ? String(service.price) : "");
+  const [billingUnit, setBillingUnit] = useState(service?.billingUnit || "flat");
+  const [isAvailable, setIsAvailable] = useState(service ? service.isAvailable : true);
+  const [imageUrl, setImageUrl] = useState(service?.imageUrl || null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const finalCategory = categoryChoice === "custom" ? customCategory.trim() : categoryChoice;
+  const canSave = name.trim().length > 0 && finalCategory.length > 0 && price !== "" && Number(price) >= 0;
+
+  async function handleFileChange(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadError("");
+    try {
+      const path = `${branchId}/${newId()}-${file.name}`;
+      const { error: upErr } = await supabase.storage.from("service-photos").upload(path, file);
+      if (upErr) throw upErr;
+      const { data } = supabase.storage.from("service-photos").getPublicUrl(path);
+      setImageUrl(data.publicUrl);
+    } catch (err) {
+      setUploadError("Couldn't upload that photo — you can still save without one.");
+    }
+    setUploading(false);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    await onSave({ id: service?.id, name: name.trim(), category: finalCategory, price: Number(price), billingUnit, isAvailable, imageUrl });
+    setSaving(false);
+  }
+
+  async function handleDelete() {
+    if (!window.confirm(`Delete "${service.name}"? This can't be undone.`)) return;
+    setDeleting(true);
+    await onDelete(service.id);
+    setDeleting(false);
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(22,35,59,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
+      <div className="ws" style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 92vw)", maxHeight: "88vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <h3 className="fr" style={{ margin: 0, fontSize: "19px" }}>{isEdit ? "Edit service" : "New service"}</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={18} /></button>
+        </div>
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Name</label>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Chicken Curry"
+          autoFocus
+          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 14px", fontSize: "14px", boxSizing: "border-box" }}
+        />
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Category</label>
+        <select
+          value={categoryChoice}
+          onChange={(e) => setCategoryChoice(e.target.value)}
+          style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "6px 0 8px", fontSize: "14px" }}
+        >
+          {GUEST_REQUEST_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          <option value="custom">Other (booking add-on, e.g. Transport)</option>
+        </select>
+        {categoryChoice === "custom" ? (
+          <input
+            value={customCategory}
+            onChange={(e) => setCustomCategory(e.target.value)}
+            placeholder="e.g. Transport"
+            style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, margin: "0 0 14px", fontSize: "14px", boxSizing: "border-box" }}
+          />
+        ) : (
+          <p style={{ fontSize: "11px", color: C.inkSoft, margin: "0 0 14px" }}>
+            {GUEST_REQUEST_CATEGORIES.includes(categoryChoice) ? "Shows up in the guest portal's ordering menu." : ""}
+          </p>
+        )}
+
+        <div style={{ display: "flex", gap: "10px", marginBottom: "14px" }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Price (TSh)</label>
+            <input
+              type="number" min="0" value={price} onChange={(e) => setPrice(e.target.value)}
+              style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", fontSize: "14px", boxSizing: "border-box" }}
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Billing</label>
+            <select value={billingUnit} onChange={(e) => setBillingUnit(e.target.value)} style={{ width: "100%", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, marginTop: "6px", fontSize: "14px" }}>
+              <option value="flat">One-time</option>
+              <option value="per_night">Per night</option>
+            </select>
+          </div>
+        </div>
+
+        <label style={{ fontSize: "12.5px", color: C.inkSoft }}>Photo (optional)</label>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", margin: "6px 0 6px" }}>
+          {imageUrl ? (
+            <img src={imageUrl} alt="" style={{ width: "56px", height: "56px", borderRadius: "8px", objectFit: "cover", border: `1px solid ${C.line}` }} />
+          ) : (
+            <div style={{ width: "56px", height: "56px", borderRadius: "8px", border: `1px dashed ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.inkSoft, flexShrink: 0 }}>
+              <ImageOff size={20} />
+            </div>
+          )}
+          <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: "8px" }}>
+            <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} style={{ display: "none" }} />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              style={{ fontSize: "12.5px", display: "flex", alignItems: "center", gap: "5px", border: `1px solid ${C.line}`, background: "none", borderRadius: "6px", padding: "6px 11px", cursor: uploading ? "default" : "pointer", color: C.clayDeep }}
+            >
+              <Upload size={13} /> {uploading ? "Uploading…" : imageUrl ? "Replace" : "Upload"}
+            </button>
+            {imageUrl && (
+              <button type="button" onClick={() => setImageUrl(null)} style={{ fontSize: "12.5px", border: "none", background: "none", color: C.inkSoft, cursor: "pointer" }}>
+                Remove
+              </button>
+            )}
+          </div>
+        </div>
+        {uploadError && <p style={{ fontSize: "11.5px", color: C.red, margin: "0 0 14px" }}>{uploadError}</p>}
+        {!uploadError && <div style={{ marginBottom: "14px" }} />}
+
+        <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13.5px", color: C.ink, marginBottom: "18px" }}>
+          <input type="checkbox" checked={isAvailable} onChange={(e) => setIsAvailable(e.target.checked)} />
+          Available to order right now
+        </label>
+
+        <button
+          disabled={!canSave || saving}
+          onClick={handleSave}
+          style={{
+            width: "100%", background: canSave ? C.ink : C.line, color: canSave ? "#fff" : C.inkSoft,
+            border: "none", borderRadius: "8px", padding: "11px", fontSize: "14.5px",
+            cursor: canSave && !saving ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
+            opacity: saving ? 0.7 : 1
+          }}
+        >
+          <Check size={16} /> {saving ? "Saving…" : "Save service"}
+        </button>
+
+        {isEdit && (
+          <button
+            disabled={deleting}
+            onClick={handleDelete}
+            style={{ width: "100%", marginTop: "8px", padding: "9px", borderRadius: "8px", border: "none", background: "none", color: C.red, fontSize: "13px", cursor: deleting ? "default" : "pointer" }}
+          >
+            {deleting ? "Deleting…" : "Delete service"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
   const [role, setRole] = useState(null); // 'owner' | 'manager' | 'staff' | null while loading
@@ -1119,6 +1292,8 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [printInvoice, setPrintInvoice] = useState(null);
   const [editingBooking, setEditingBooking] = useState(null);
   const [paymentModal, setPaymentModal] = useState(null); // { invoice, kind: "payment" | "refund" }
+  const [showAddService, setShowAddService] = useState(false);
+  const [editingService, setEditingService] = useState(null);
   const [teamMembers, setTeamMembers] = useState([]);
   const [teamLoading, setTeamLoading] = useState(false);
   const isMobile = useIsMobile();
@@ -1654,6 +1829,64 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     } catch (e) {
       enqueueAction({ type: "addExpense", payload });
       setPendingCount(queueCount());
+    }
+  }
+
+  // Services aren't typically created in a rush at the front desk the way a
+  // booking or payment is, so unlike those, this goes straight to Supabase
+  // rather than through the offline queue — simpler, and a failure here is
+  // rare enough that a plain retry is the reasonable answer.
+  async function saveService(fields) {
+    const payload = {
+      branch_id: branchId,
+      name: fields.name,
+      category: fields.category,
+      price: fields.price,
+      billing_unit: fields.billingUnit,
+      is_available: fields.isAvailable,
+      image_url: fields.imageUrl || null,
+    };
+    try {
+      if (fields.id) {
+        const { data, error } = await supabase.from("services").update(payload).eq("id", fields.id).select().single();
+        if (error) throw error;
+        setServices((prev) => prev.map((s) => (s.id === fields.id ? mapService(data) : s)));
+      } else {
+        const id = newId();
+        const { data, error } = await supabase.from("services").insert({ id, ...payload }).select().single();
+        if (error) throw error;
+        setServices((prev) => [...prev, mapService(data)]);
+      }
+      setShowAddService(false);
+      setEditingService(null);
+    } catch (e) {
+      alert("Couldn't save that service: " + (e.message || "please try again."));
+    }
+  }
+
+  async function deleteService(id) {
+    try {
+      const { error } = await supabase.from("services").delete().eq("id", id);
+      if (error) throw error;
+      setServices((prev) => prev.filter((s) => s.id !== id));
+      setEditingService(null);
+    } catch (e) {
+      alert("Couldn't delete that service: " + (e.message || "please try again."));
+    }
+  }
+
+  // The one-click availability toggle right on the catalog row — forward-
+  // looking only: it stops the item from being ordered again, but doesn't
+  // touch any request already placed against it before the toggle.
+  async function toggleServiceAvailability(service) {
+    const nextAvailable = !service.isAvailable;
+    setServices((prev) => prev.map((s) => (s.id === service.id ? { ...s, isAvailable: nextAvailable } : s)));
+    try {
+      const { error } = await supabase.from("services").update({ is_available: nextAvailable }).eq("id", service.id);
+      if (error) throw error;
+    } catch (e) {
+      setServices((prev) => prev.map((s) => (s.id === service.id ? { ...s, isAvailable: !nextAvailable } : s)));
+      alert("Couldn't update availability: " + (e.message || "please try again."));
     }
   }
 
@@ -2281,24 +2514,69 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
           {tab === "services" && (
             <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <Panel title="Service catalog">
+            <Panel
+              title="Service catalog"
+              action={
+                <button
+                  onClick={() => setShowAddService(true)}
+                  style={{ display: "flex", alignItems: "center", gap: "6px", background: C.clay, color: "#fff", border: "none", borderRadius: "7px", padding: "8px 13px", fontSize: "13.5px", cursor: "pointer" }}
+                >
+                  <Plus size={15} /> New service
+                </button>
+              }
+            >
               <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                 <thead>
                   <tr style={{ textAlign: "left", color: C.inkSoft, fontSize: "12.5px" }}>
-                    <th style={{ paddingBottom: "10px" }}>Service</th>
+                    <th style={{ paddingBottom: "10px" }}></th>
+                    <th>Service</th>
                     <th>Category</th>
                     <th>Price</th>
+                    <th>Availability</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {bServices.map((s) => (
                     <tr key={s.id} style={{ borderTop: `1px solid ${C.line}` }}>
-                      <td style={{ padding: "10px 0" }}>{s.name}</td>
+                      <td style={{ padding: "10px 0" }}>
+                        {s.imageUrl ? (
+                          <img src={s.imageUrl} alt="" style={{ width: "34px", height: "34px", borderRadius: "6px", objectFit: "cover" }} />
+                        ) : (
+                          <div style={{ width: "34px", height: "34px", borderRadius: "6px", border: `1px dashed ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.inkSoft }}>
+                            <ImageOff size={14} />
+                          </div>
+                        )}
+                      </td>
+                      <td>{s.name}</td>
                       <td>{s.category}</td>
                       <td>{money(s.price)}{s.billingUnit === "per_night" ? "/night" : ""}</td>
+                      <td>
+                        <button
+                          onClick={() => toggleServiceAvailability(s)}
+                          style={{
+                            fontSize: "12px", fontWeight: 500, border: "none", borderRadius: "999px", padding: "4px 11px", cursor: "pointer",
+                            background: s.isAvailable ? C.signalSoft : C.line, color: s.isAvailable ? "#1E6E67" : C.inkSoft,
+                          }}
+                        >
+                          {s.isAvailable ? "Available" : "Unavailable"}
+                        </button>
+                      </td>
+                      <td>
+                        <button
+                          onClick={() => setEditingService(s)}
+                          style={{ background: "none", border: "none", cursor: "pointer", color: C.inkSoft, padding: "4px" }}
+                          title="Edit"
+                        >
+                          <Pencil size={15} />
+                        </button>
+                      </td>
                     </tr>
                   ))}
+                  {bServices.length === 0 && (
+                    <tr><td colSpan={6} style={{ padding: "14px 0", color: C.inkSoft, fontSize: "13.5px" }}>No services yet — add the first one above.</td></tr>
+                  )}
                 </tbody>
               </table>
               </div>
@@ -2713,6 +2991,17 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           balance={invoiceBalance(paymentModal.invoice, payments)}
           onClose={() => setPaymentModal(null)}
           onSave={recordPayment}
+        />
+      )}
+
+      {/* Create or edit a service */}
+      {(showAddService || editingService) && (
+        <ServiceModal
+          service={editingService}
+          branchId={branchId}
+          onClose={() => { setShowAddService(false); setEditingService(null); }}
+          onSave={saveService}
+          onDelete={deleteService}
         />
       )}
     </div>
@@ -3668,6 +3957,7 @@ function GuestApp({ onExit, initialCode }) {
   const [guestServicesLoading, setGuestServicesLoading] = useState(false);
   const [activeCategory, setActiveCategory] = useState(null);
   const [quantities, setQuantities] = useState({});
+  const [cookingNotes, setCookingNotes] = useState({});
   const [requestedIds, setRequestedIds] = useState([]);
   const [sendingId, setSendingId] = useState(null);
   const [customMessage, setCustomMessage] = useState("");
@@ -3754,11 +4044,14 @@ function GuestApp({ onExit, initialCode }) {
   }, [session]);
 
   async function requestItem(item) {
+    if (item.is_available === false) return;
     setSendingId(item.id);
     const hasQuantity = item.category === "Kitchen" || item.category === "Laundry";
     const qty = hasQuantity ? (quantities[item.id] || 1) : 1;
     const qtyLabel = qty > 1 ? ` × ${qty}` : "";
     const priceLabel = item.price > 0 ? `TSh ${Number(item.price).toLocaleString()}` : "Free";
+    const note = item.category === "Kitchen" ? (cookingNotes[item.id] || "").trim() : "";
+    const noteLabel = note ? ` — ${note}` : "";
     await supabase.from("service_requests").insert({
       code: session.access.code,
       guest_name: session.access.guest_name,
@@ -3767,7 +4060,7 @@ function GuestApp({ onExit, initialCode }) {
       category: item.category,
       quantity: qty,
       amount: item.price * qty,
-      message: `${session.access.guest_name} requested ${item.name}${qtyLabel} (${priceLabel})`,
+      message: `${session.access.guest_name} requested ${item.name}${qtyLabel} (${priceLabel})${noteLabel}`,
     });
     setSendingId(null);
     setRequestedIds((prev) => [...prev, item.id]);
@@ -3898,7 +4191,7 @@ function GuestApp({ onExit, initialCode }) {
   };
 
   return (
-    <div className="ws" style={{ minHeight: "560px", background: C.paper, display: "flex", justifyContent: "center", padding: "36px 20px" }}>
+    <div className="ws" style={{ minHeight: "560px", background: C.paper, display: "flex", justifyContent: "center", padding: "36px 20px 100px" }}>
       {FONTS}
       <div style={{ width: "min(420px, 100%)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
@@ -4093,86 +4386,131 @@ function GuestApp({ onExit, initialCode }) {
                 ))}
               </div>
               <p style={{ fontSize: "13px", color: C.inkSoft, marginTop: 0, marginBottom: "14px" }}>
-                {activeCategory === "Kitchen" && "Pick a quantity and send your order to the kitchen."}
+                {activeCategory === "Kitchen" && "Pick a quantity, add any notes on how you'd like it prepared, and send your order to the kitchen."}
                 {(activeCategory === "Counter" || activeCategory === "Amenities") && "Tap to request any item — staff will bring it to your room."}
                 {activeCategory === "Laundry" && "Pick a quantity per item — ironing is complimentary."}
               </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                {guestServices.filter((item) => item.category === activeCategory).map((item) => {
-                  const requested = requestedIds.includes(item.id);
-                  const hasQuantity = item.category === "Kitchen" || item.category === "Laundry";
-                  const qty = quantities[item.id] || 1;
-                  return (
-                    <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${C.line}`, gap: "10px" }}>
-                      <div>
-                        <div style={{ fontSize: "13.5px", fontWeight: 500 }}>{item.name}</div>
-                        <div style={{ fontSize: "12px", color: C.inkSoft }}>{item.price > 0 ? `TSh ${Number(item.price).toLocaleString()}` : "Free"}</div>
-                      </div>
-                      {requested ? (
-                        <span style={{ fontSize: "12.5px", color: "#1E6E67", fontWeight: 500, whiteSpace: "nowrap" }}>Requested</span>
-                      ) : (
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          {hasQuantity && (
-                            <input
-                              type="number"
-                              min="1"
-                              value={qty}
-                              onChange={(e) => setQuantities((prev) => ({ ...prev, [item.id]: Math.max(1, Number(e.target.value) || 1) }))}
-                              disabled={isExpired}
-                              style={{ width: "48px", padding: "6px", borderRadius: "6px", border: `1px solid ${C.line}`, fontSize: "12.5px", textAlign: "center" }}
-                            />
+
+              {activeCategory === "Kitchen" ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "10px" }}>
+                  {guestServices.filter((item) => item.category === "Kitchen").map((item) => {
+                    const requested = requestedIds.includes(item.id);
+                    const available = item.is_available !== false;
+                    const qty = quantities[item.id] || 1;
+                    const disabled = isExpired || !available;
+                    return (
+                      <div key={item.id} style={{
+                        border: `1px solid ${C.line}`, borderRadius: "10px", overflow: "hidden",
+                        opacity: available ? 1 : 0.55, background: C.paperRaised
+                      }}>
+                        {item.image_url ? (
+                          <img src={item.image_url} alt={item.name} style={{ width: "100%", height: "90px", objectFit: "cover", display: "block" }} />
+                        ) : (
+                          <div style={{ width: "100%", height: "90px", background: C.paper, display: "flex", alignItems: "center", justifyContent: "center", color: C.inkSoft }}>
+                            <UtensilsCrossed size={22} />
+                          </div>
+                        )}
+                        <div style={{ padding: "10px" }}>
+                          <div style={{ fontSize: "13px", fontWeight: 500 }}>{item.name}</div>
+                          <div style={{ fontSize: "11.5px", color: C.inkSoft, marginBottom: "8px" }}>
+                            {item.price > 0 ? `TSh ${Number(item.price).toLocaleString()}` : "Free"}
+                          </div>
+
+                          {!available ? (
+                            <span style={{ fontSize: "11.5px", color: C.red, fontWeight: 500 }}>Currently unavailable</span>
+                          ) : requested ? (
+                            <span style={{ fontSize: "12px", color: "#1E6E67", fontWeight: 500 }}>Requested</span>
+                          ) : (
+                            <>
+                              <div style={{ display: "flex", gap: "6px", marginBottom: "6px" }}>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={qty}
+                                  onChange={(e) => setQuantities((prev) => ({ ...prev, [item.id]: Math.max(1, Number(e.target.value) || 1) }))}
+                                  disabled={disabled}
+                                  style={{ width: "42px", padding: "6px", borderRadius: "6px", border: `1px solid ${C.line}`, fontSize: "12px", textAlign: "center" }}
+                                />
+                                <input
+                                  value={cookingNotes[item.id] || ""}
+                                  onChange={(e) => setCookingNotes((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                                  placeholder="How prepared? (optional)"
+                                  disabled={disabled}
+                                  style={{ flex: 1, minWidth: 0, padding: "6px 8px", borderRadius: "6px", border: `1px solid ${C.line}`, fontSize: "11.5px", boxSizing: "border-box" }}
+                                />
+                              </div>
+                              <button
+                                disabled={disabled || sendingId === item.id}
+                                onClick={() => requestItem(item)}
+                                style={{
+                                  width: "100%", fontSize: "12.5px", border: "none", borderRadius: "6px", padding: "6px 0",
+                                  background: disabled ? C.line : C.clay, color: disabled ? C.inkSoft : "#fff",
+                                  cursor: disabled ? "default" : "pointer", opacity: sendingId === item.id ? 0.7 : 1
+                                }}
+                              >
+                                {sendingId === item.id ? "Sending…" : "Request"}
+                              </button>
+                            </>
                           )}
-                          <button
-                            disabled={isExpired || sendingId === item.id}
-                            onClick={() => requestItem(item)}
-                            style={{
-                              fontSize: "12.5px", border: "none", borderRadius: "6px", padding: "6px 12px", whiteSpace: "nowrap",
-                              background: isExpired ? C.line : C.clay, color: isExpired ? C.inkSoft : "#fff",
-                              cursor: isExpired ? "default" : "pointer", opacity: sendingId === item.id ? 0.7 : 1
-                            }}
-                          >
-                            {sendingId === item.id ? "Sending…" : "Request"}
-                          </button>
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {guestServices.filter((item) => item.category === activeCategory).map((item) => {
+                    const requested = requestedIds.includes(item.id);
+                    const available = item.is_available !== false;
+                    const hasQuantity = item.category === "Laundry";
+                    const qty = quantities[item.id] || 1;
+                    const disabled = isExpired || !available;
+                    return (
+                      <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${C.line}`, gap: "10px", opacity: available ? 1 : 0.55 }}>
+                        <div>
+                          <div style={{ fontSize: "13.5px", fontWeight: 500 }}>{item.name}</div>
+                          <div style={{ fontSize: "12px", color: C.inkSoft }}>{item.price > 0 ? `TSh ${Number(item.price).toLocaleString()}` : "Free"}</div>
+                        </div>
+                        {!available ? (
+                          <span style={{ fontSize: "12px", color: C.red, fontWeight: 500, whiteSpace: "nowrap" }}>Currently unavailable</span>
+                        ) : requested ? (
+                          <span style={{ fontSize: "12.5px", color: "#1E6E67", fontWeight: 500, whiteSpace: "nowrap" }}>Requested</span>
+                        ) : (
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            {hasQuantity && (
+                              <input
+                                type="number"
+                                min="1"
+                                value={qty}
+                                onChange={(e) => setQuantities((prev) => ({ ...prev, [item.id]: Math.max(1, Number(e.target.value) || 1) }))}
+                                disabled={disabled}
+                                style={{ width: "48px", padding: "6px", borderRadius: "6px", border: `1px solid ${C.line}`, fontSize: "12.5px", textAlign: "center" }}
+                              />
+                            )}
+                            <button
+                              disabled={disabled || sendingId === item.id}
+                              onClick={() => requestItem(item)}
+                              style={{
+                                fontSize: "12.5px", border: "none", borderRadius: "6px", padding: "6px 12px", whiteSpace: "nowrap",
+                                background: disabled ? C.line : C.clay, color: disabled ? C.inkSoft : "#fff",
+                                cursor: disabled ? "default" : "pointer", opacity: sendingId === item.id ? 0.7 : 1
+                              }}
+                            >
+                              {sendingId === item.id ? "Sending…" : "Request"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </Panel>
             <div style={{ height: "14px" }} />
           </>
         )}
 
         <Panel title="Front desk">
-          <div style={{ marginBottom: "16px", paddingBottom: "16px", borderBottom: `1px solid ${C.line}` }}>
-            <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px", color: C.ink }}>Message the front desk</p>
-            <textarea
-              value={customMessage}
-              onChange={(e) => setCustomMessage(e.target.value)}
-              placeholder="Type anything you need — this goes straight to the front desk."
-              disabled={isExpired || customSending}
-              rows={3}
-              style={{ width: "100%", padding: "9px 10px", borderRadius: "7px", border: `1px solid ${C.line}`, fontSize: "13.5px", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }}
-            />
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px" }}>
-              {customSent ? (
-                <span style={{ fontSize: "12.5px", color: "#1E6E67" }}>Sent — the front desk has been notified.</span>
-              ) : <span />}
-              <button
-                disabled={isExpired || customSending || !customMessage.trim()}
-                onClick={sendCustomMessage}
-                style={{
-                  padding: "9px 16px", borderRadius: "7px", border: "none", fontSize: "13.5px",
-                  background: isExpired || !customMessage.trim() ? C.line : C.signal, color: isExpired || !customMessage.trim() ? C.inkSoft : "#fff",
-                  cursor: isExpired || !customMessage.trim() ? "default" : "pointer", opacity: customSending ? 0.7 : 1
-                }}
-              >
-                {customSending ? "Sending…" : "Send"}
-              </button>
-            </div>
-          </div>
-
           <div>
             <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px", color: C.ink }}>Airtime top-up</p>
             {airtimeSent ? (
@@ -4254,6 +4592,51 @@ function GuestApp({ onExit, initialCode }) {
           )}
         </div>
       </div>
+
+      {/* Floating message composer — pinned to the bottom of the screen so a
+          guest never has to scroll past everything else just to say something
+          urgent. Same width as the rest of the content, centered, one line
+          plus Send. Hidden entirely when printing, and disabled (not hidden)
+          once access has expired. */}
+      <div className="no-print" style={{ position: "fixed", left: 0, right: 0, bottom: 0, display: "flex", justifyContent: "center", padding: "12px 20px", pointerEvents: "none" }}>
+        <div style={{
+          width: "min(420px, 100%)", display: "flex", gap: "8px", alignItems: "center",
+          background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "999px",
+          padding: "6px 6px 6px 16px", boxShadow: "0 6px 20px rgba(22,35,59,0.14)", pointerEvents: "auto"
+        }}>
+          <input
+            value={customMessage}
+            onChange={(e) => setCustomMessage(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !isExpired && !customSending && customMessage.trim()) sendCustomMessage(); }}
+            placeholder={isExpired ? "Messaging is closed for this stay" : "Message the front desk…"}
+            disabled={isExpired || customSending}
+            className="ws"
+            style={{ flex: 1, minWidth: 0, border: "none", outline: "none", fontSize: "13.5px", background: "none", color: C.ink }}
+          />
+          <button
+            disabled={isExpired || customSending || !customMessage.trim()}
+            onClick={sendCustomMessage}
+            aria-label="Send"
+            style={{
+              width: "34px", height: "34px", borderRadius: "50%", border: "none", flexShrink: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: isExpired || !customMessage.trim() ? C.line : C.signal,
+              color: isExpired || !customMessage.trim() ? C.inkSoft : "#fff",
+              cursor: isExpired || !customMessage.trim() ? "default" : "pointer",
+              opacity: customSending ? 0.7 : 1
+            }}
+          >
+            <ArrowUp size={16} strokeWidth={2.5} />
+          </button>
+        </div>
+      </div>
+      {customSent && (
+        <div className="no-print" style={{ position: "fixed", left: 0, right: 0, bottom: "68px", display: "flex", justifyContent: "center", pointerEvents: "none" }}>
+          <span style={{ fontSize: "12px", color: "#1E6E67", background: C.signalSoft, padding: "4px 12px", borderRadius: "999px" }}>
+            Sent — the front desk has been notified.
+          </span>
+        </div>
+      )}
     </div>
   );
 }
