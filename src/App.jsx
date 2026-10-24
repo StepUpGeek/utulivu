@@ -4674,8 +4674,8 @@ function GuestApp({ onExit, initialCode, lang, setLang }) {
                     ))}
                   </div>
                   <p style={{ fontSize: "13px", color: C.inkSoft, marginTop: 0, marginBottom: "14px" }}>
-                    {(activeCategory === "Counter" || activeCategory === "Amenities") && "{g("tapToRequest")}"}
-                    {activeCategory === "Laundry" && "{g("laundryNote")}"}
+                    {(activeCategory === "Counter" || activeCategory === "Amenities") && g("tapToRequest")}
+                    {activeCategory === "Laundry" && g("laundryNote")}
                   </p>
                   <OtherServicesList
                     items={guestServices.filter((item) => item.category === activeCategory)}
