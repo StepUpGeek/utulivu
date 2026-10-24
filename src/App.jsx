@@ -4873,7 +4873,7 @@ const DATE_LOCALE = { en: "en-GB", sw: "sw-TZ" };
 const T = {
   en: {
     welcome: "Welcome to Matondo Guest House",
-    intro: "A calm place to stay, with everything you need on your phone.",
+    intro: "Your comfort comes first at Matondo Guest House. Reserve your room, follow your stay, and reach our team, all from your phone. We're dedicated to a calm, comfortable stay.",
     reserve: "Make a reservation", access: "Access your stay",
     getInTouch: "Get in touch", address: "Address", openMaps: "Open in Google Maps →",
     whatsapp: "Message on WhatsApp", call: "Call",
@@ -5187,7 +5187,7 @@ function Landing({ onGuest, lang, setLang }) {
 
       <main style={{ maxWidth: "880px", margin: "0 auto", padding: isMobile ? "40px 18px" : "72px 32px" }}>
         <div style={{ marginBottom: "10px" }}>
-          <div style={{ fontSize: isMobile ? "30px" : "40px", fontWeight: 500, color: C.clayDeep, lineHeight: 1.2, minHeight: isMobile ? "120px" : "130px" }}>
+          <div style={{ fontSize: isMobile ? "30px" : "40px", fontWeight: 500, color: C.clayDeep, lineHeight: 1.2 }}>
             <WelcomeWord />
           </div>
           <h1 className="rise" key={`h-${lang}`} style={{ fontSize: isMobile ? "24px" : "34px", fontWeight: 500, lineHeight: 1.2, margin: "6px 0 0", animationDelay: "0.1s" }}>{BUSINESS.name}</h1>
@@ -5195,7 +5195,7 @@ function Landing({ onGuest, lang, setLang }) {
         <div className="rise" key={`i-${lang}`} style={{ animationDelay: "0.15s" }}>
           <p style={{ fontSize: isMobile ? "15px" : "17px", color: C.inkSoft, lineHeight: 1.6, maxWidth: "640px", margin: "0 0 32px" }}>{t.intro}</p>
         </div>
-        <div className="rise" key={`b-${lang}`} style={{ animationDelay: "0.3s", display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "64px" }}>
+        <div className="rise" key={`b-${lang}`} style={{ animationDelay: "0.3s", display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "40px" }}>
           <a href="#reserve" className="cta" style={{ display: "inline-block", background: C.clay, color: "#fff", borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
             {t.reserve}
           </a>
