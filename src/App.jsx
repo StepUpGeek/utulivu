@@ -38,8 +38,8 @@ const FEATURES = { kitchen: false };
 
 const FONTS = (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&family=Courier+Prime:wght@400;700&display=swap');
-    .fr { font-family: 'Fraunces', serif; }
+    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Amiri:wght@400;700&family=Noto+Serif+SC:wght@400;500;600&family=Work+Sans:wght@400;500;600&family=Courier+Prime:wght@400;700&display=swap');
+    .fr { font-family: 'Cormorant Garamond', 'Amiri', 'Noto Serif SC', serif; font-weight: 500; }
     .ws { font-family: 'Work Sans', sans-serif; }
     .typewriter { font-family: 'Courier Prime', 'Courier New', monospace; }
     @keyframes ripple {
@@ -5190,7 +5190,6 @@ function Landing({ onGuest, lang, setLang }) {
           <div style={{ fontSize: isMobile ? "30px" : "40px", fontWeight: 500, color: C.clayDeep, lineHeight: 1.2 }}>
             <WelcomeWord />
           </div>
-          <h1 className="rise" key={`h-${lang}`} style={{ fontSize: isMobile ? "24px" : "34px", fontWeight: 500, lineHeight: 1.2, margin: "6px 0 0", animationDelay: "0.1s" }}>{BUSINESS.name}</h1>
         </div>
         <div className="rise" key={`i-${lang}`} style={{ animationDelay: "0.15s" }}>
           <p style={{ fontSize: isMobile ? "15px" : "17px", color: C.inkSoft, lineHeight: 1.6, maxWidth: "640px", margin: "0 0 32px" }}>{t.intro}</p>
