@@ -49,6 +49,10 @@ const FONTS = (
     .tap-ripple { animation: ripple 1s ease-out; }
     @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
     .rise { animation: rise 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+    @keyframes slideLeft { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+    @keyframes slideRight { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+    .slide-in { animation: slideLeft 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+    .slide-in-rtl { animation-name: slideRight; }
     .cta:hover { transform: translateY(-1px); }
     .cta { transition: transform 150ms ease; }
     .resv input:focus, .resv textarea:focus, .resv select:focus {
@@ -57,7 +61,7 @@ const FONTS = (
     }
     .resv input, .resv textarea { transition: border-color 150ms ease, box-shadow 150ms ease; }
     @media (prefers-reduced-motion: reduce) {
-      .rise, .cta { animation: none !important; transition: none !important; }
+      .rise, .cta, .slide-in { animation: none !important; transition: none !important; }
     }
   `}</style>
 );
@@ -4843,7 +4847,7 @@ function GuestApp({ onExit, initialCode, lang, setLang }) {
 --------------------------------------------------------- */
 const BUSINESS = {
   name: "MATONDO GUEST HOUSE",
-  address: "Kakola, Msalala, Shinyanga, Tanzania",
+  address: "Kakola, Msalala-Kahama",
   mapsUrl: "https://maps.app.goo.gl/6oaT98HdXyJd3vDX9",
   phone: "+255 714 566 925",
   phoneDial: "+255714566925",
@@ -5151,24 +5155,7 @@ function WelcomeWord() {
   const item = WELCOME_WORDS[i];
   return (
     <div>
-      <div key={i} className="rise fr" dir={item.dir} style={{ display: "inline-block", fontSize: "inherit" }}>{item.w}</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", marginTop: "10px", fontFamily: "'Work Sans', sans-serif", fontSize: "12.5px" }}>
-        {WELCOME_WORDS.map((x, idx) => (
-          <span
-            key={x.name}
-            dir={x.dir}
-            style={{
-              color: idx === i ? C.clay : C.inkSoft,
-              fontWeight: idx === i ? 600 : 400,
-              borderBottom: idx === i ? `2px solid ${C.clay}` : "2px solid transparent",
-              paddingBottom: "2px",
-              transition: "color 300ms ease, border-color 300ms ease",
-            }}
-          >
-            {x.name}
-          </span>
-        ))}
-      </div>
+      <div key={i} className={`slide-in${item.dir === "rtl" ? " slide-in-rtl" : ""} fr`} dir={item.dir} style={{ display: "inline-block", fontSize: "inherit" }}>{item.w}</div>
     </div>
   );
 }
