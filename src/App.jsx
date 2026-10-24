@@ -4844,25 +4844,33 @@ const LANDING = {
   name: BUSINESS.name,
   pitch: "Welcome to Matondo Guest House.",
   intro: "A calm place to stay, with everything you need on your phone.",
-  roomTypes: ["Single", "Double", "Deluxe", "Presidential"],
 };
 
 const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${C.line}`, fontSize: "14px", boxSizing: "border-box", background: "#fff", fontFamily: "inherit" };
 const labelStyle = { fontSize: "12.5px", color: C.inkSoft, display: "block", marginBottom: "6px" };
 
-// Public reservation enquiry. Saves to reservation_requests, which staff
-// see in the Inquiries tab. An enquiry is not a confirmed booking: staff
-// call back, then create the booking themselves.
+// Public reservation enquiry. Guests give a name, a phone number, an arrival
+// date and how many nights. The check-out date is worked out from those, so
+// staff still receive exact dates in the inbox. Saves to reservation_requests.
+// An enquiry is not a confirmed booking: staff call back to confirm.
+function addDaysISO(dateStr, days) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function ReservationForm() {
   const isMobile = useIsMobile();
-  const blank = { name: "", phone: "", email: "", checkIn: "", checkOut: "", guests: "1", roomType: "", message: "", website: "" };
+  const blank = { name: "", phone: "", arriving: "", nights: "1", guests: "1", message: "", website: "" };
   const [f, setF] = useState(blank);
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
   const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
-  const datesOk = f.checkIn && f.checkOut && f.checkOut > f.checkIn;
-  const canSend = f.name.trim().length >= 2 && f.phone.trim().length >= 6 && datesOk && !sending;
+  const nights = Math.min(Math.max(Number(f.nights) || 1, 1), 60);
+  const checkOut = f.arriving ? addDaysISO(f.arriving, nights) : "";
+  const canSend = f.name.trim().length >= 2 && f.phone.trim().length >= 6 && !!f.arriving && !sending;
 
   async function submit(e) {
     e.preventDefault();
@@ -4875,11 +4883,9 @@ function ReservationForm() {
     const { error: err } = await supabase.from("reservation_requests").insert({
       name: f.name.trim().slice(0, 120),
       phone: f.phone.trim().slice(0, 40),
-      email: f.email.trim().slice(0, 160) || null,
-      check_in: f.checkIn,
-      check_out: f.checkOut,
+      check_in: f.arriving,
+      check_out: checkOut,
       guests: Math.min(Math.max(Number(f.guests) || 1, 1), 20),
-      room_type: f.roomType || null,
       message: f.message.trim().slice(0, 1000) || null,
     });
     setSending(false);
@@ -4892,7 +4898,7 @@ function ReservationForm() {
       <div style={{ padding: "8px 0" }}>
         <div className="fr" style={{ fontSize: "20px", fontWeight: 500, marginBottom: "8px" }}>Thank you, {f.name.trim().split(" ")[0] || "for your request"}.</div>
         <p style={{ fontSize: "14px", color: C.inkSoft, lineHeight: 1.6, margin: 0 }}>
-          We've received your enquiry and will contact you on {f.phone.trim()} to confirm your stay.
+          We've received your request and will call you on {f.phone.trim()} to confirm your stay.
         </p>
       </div>
     );
@@ -4902,7 +4908,7 @@ function ReservationForm() {
     <form onSubmit={submit} noValidate>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "14px" }}>
         <div>
-          <label style={labelStyle}>Full name *</label>
+          <label style={labelStyle}>Your name *</label>
           <input style={inputStyle} value={f.name} onChange={set("name")} placeholder="e.g. Halima Juma" />
         </div>
         <div>
@@ -4910,31 +4916,25 @@ function ReservationForm() {
           <input style={inputStyle} value={f.phone} onChange={set("phone")} placeholder="+255 7XX XXX XXX" />
         </div>
         <div>
-          <label style={labelStyle}>Check-in *</label>
-          <input type="date" style={inputStyle} value={f.checkIn} onChange={set("checkIn")} />
+          <label style={labelStyle}>Arriving *</label>
+          <input type="date" style={inputStyle} value={f.arriving} onChange={set("arriving")} />
         </div>
         <div>
-          <label style={labelStyle}>Check-out *</label>
-          <input type="date" style={inputStyle} value={f.checkOut} onChange={set("checkOut")} />
+          <label style={labelStyle}>Number of nights</label>
+          <input type="number" min="1" max="60" style={inputStyle} value={f.nights} onChange={set("nights")} />
         </div>
         <div>
           <label style={labelStyle}>Guests</label>
           <input type="number" min="1" max="20" style={inputStyle} value={f.guests} onChange={set("guests")} />
         </div>
-        <div>
-          <label style={labelStyle}>Room type</label>
-          <select style={inputStyle} value={f.roomType} onChange={set("roomType")}>
-            <option value="">Any available</option>
-            {LANDING.roomTypes.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
+        <div style={{ display: "flex", alignItems: "flex-end" }}>
+          {f.arriving ? (
+            <span style={{ fontSize: "12.5px", color: C.inkSoft, paddingBottom: "10px" }}>Leaving {checkOut}</span>
+          ) : null}
         </div>
         <div style={{ gridColumn: "1 / -1" }}>
-          <label style={labelStyle}>Email (optional)</label>
-          <input type="email" style={inputStyle} value={f.email} onChange={set("email")} placeholder="you@example.com" />
-        </div>
-        <div style={{ gridColumn: "1 / -1" }}>
-          <label style={labelStyle}>Anything we should know?</label>
-          <textarea rows={3} style={{ ...inputStyle, resize: "vertical" }} value={f.message} onChange={set("message")} placeholder="Arrival time, special requests, number of nights…" />
+          <label style={labelStyle}>Anything we should know? (optional)</label>
+          <textarea rows={3} style={{ ...inputStyle, resize: "vertical" }} value={f.message} onChange={set("message")} placeholder="Arrival time, special requests…" />
         </div>
       </div>
 
@@ -4943,13 +4943,10 @@ function ReservationForm() {
         <label>Website<input tabIndex={-1} autoComplete="off" value={f.website} onChange={set("website")} /></label>
       </div>
 
-      {f.checkIn && f.checkOut && !datesOk && (
-        <p style={{ fontSize: "12.5px", color: C.red, margin: "12px 0 0" }}>Check-out must be after check-in.</p>
-      )}
       {error && <p style={{ fontSize: "12.5px", color: C.red, margin: "12px 0 0" }}>{error}</p>}
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap", marginTop: "18px" }}>
-        <span style={{ fontSize: "12px", color: C.inkSoft }}>* required. This is an enquiry; we confirm by phone.</span>
+        <span style={{ fontSize: "12px", color: C.inkSoft }}>* required. We confirm by phone.</span>
         <button
           type="submit"
           disabled={!canSend}
