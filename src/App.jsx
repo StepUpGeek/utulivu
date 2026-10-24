@@ -5,7 +5,8 @@ import {
   LayoutGrid, CalendarDays, Users, MessageSquareText, Wrench,
   Radio, Wallet, Building2, ChevronDown, ChevronUp, Plus, X, Check, Bell, Menu, Shield,
   Bed, BedSingle, BedDouble, Sparkles, Crown, Moon, Sun,
-  UtensilsCrossed, ShoppingBag, Shirt, ImageOff, Upload, Pencil, ArrowUp, Home, Phone
+  UtensilsCrossed, ShoppingBag, Shirt, ImageOff, Upload, Pencil, ArrowUp, Home, Phone,
+  MapPin, Mail, Clock, MessageCircle
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -1285,6 +1286,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
   const [roomRates, setRoomRates] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [reservations, setReservations] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
 
   const [showBranchMenu, setShowBranchMenu] = useState(false);
@@ -1509,6 +1511,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
   useEffect(() => {
     if (tab === "team" && role === "owner") fetchTeam();
+    if (tab === "inquiries") fetchReservations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
@@ -1806,6 +1809,17 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
         setInvoices((prev) => [...prev, { id: "temp-" + Date.now(), branchId, bookingId: id, amount, status: "outstanding" }]);
       }
     }
+  }
+
+  async function fetchReservations() {
+    const { data } = await supabase.from("reservation_requests").select("*").order("created_at", { ascending: false });
+    if (data) setReservations(data);
+  }
+
+  async function updateReservationStatus(id, status) {
+    setReservations((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)));
+    const { error } = await supabase.from("reservation_requests").update({ status }).eq("id", id);
+    if (error) alert("Couldn't update that request: " + error.message);
   }
 
   async function fetchTeam() {
@@ -2491,6 +2505,11 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
             </Panel>
           )}
 
+          {tab === "inquiries" && (
+            <div style={{ marginBottom: "16px" }}>
+              <ReservationRequestsPanel rows={reservations} onStatus={updateReservationStatus} />
+            </div>
+          )}
           {tab === "inquiries" && (
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(4, 1fr)", gap: "14px" }}>
               {INQUIRY_STAGES.map((stage, colIdx) => (
@@ -4804,49 +4823,232 @@ function GuestApp({ onExit, initialCode }) {
    deliberately not linked here; it lives on its own subdomain.
    PLACEHOLDERS: replace the pitch and contact details before launch.
 --------------------------------------------------------- */
+/* ---------------------------------------------------------
+   Business details — the single source for everything public:
+   landing page, contact rows, footer and the reservation form.
+   Empty optional fields (email, times) are hidden until filled in.
+--------------------------------------------------------- */
+const BUSINESS = {
+  name: "MATONDO GUEST HOUSE",
+  address: "Kakola, Msalala, Shinyanga, Tanzania",
+  // Replace with the exact "Share" link from Google Maps for the pin.
+  mapsUrl: "https://www.google.com/maps/search/?api=1&query=Matondo+Guest+House+Kakola+Msalala+Shinyanga",
+  phone: "+255 714 566 925",
+  phoneDial: "+255714566925",
+  whatsapp: "255714566925",
+  email: "",
+  checkInTime: "",
+  checkOutTime: "",
+};
+
 const LANDING = {
-  name: "Matondo Guest House",
+  name: BUSINESS.name,
   pitch: "Welcome to Matondo Guest House.",
-  intro: "A calm place to stay. Check your booking, see your bill, and send a request to the front desk, all from your phone.",
+  intro: "A calm place to stay. Book your room, check your booking, see your bill, and send a request to the front desk, all from your phone.",
   features: [
     { title: "Your stay, in one place", text: "Open your stay with your access code or QR. See your room, your dates and your booking at a glance." },
     { title: "Requests that get done", text: "Ask the front desk for anything you need, then follow it until it's taken care of." },
     { title: "Clear billing", text: "See what you owe, what you've paid and your remaining balance, at any time during your stay." },
   ],
-  audience: "Matondo Guest House, a quiet place to rest and recharge.",
-  contactLabel: "Make an enquiry about a stay",
-  contactHref: "mailto:hello@example.com", // PLACEHOLDER: replace with the guesthouse's email
-  contactText: "hello@example.com", // PLACEHOLDER
+  roomTypes: ["Single", "Double", "Deluxe", "Presidential"],
+  audience: "A quiet place to rest and recharge.",
 };
+
+const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${C.line}`, fontSize: "14px", boxSizing: "border-box", background: "#fff", fontFamily: "inherit" };
+const labelStyle = { fontSize: "12.5px", color: C.inkSoft, display: "block", marginBottom: "6px" };
+
+// Public reservation enquiry. Saves to reservation_requests, which staff
+// see in the Inquiries tab. An enquiry is not a confirmed booking: staff
+// call back, then create the booking themselves.
+function ReservationForm() {
+  const isMobile = useIsMobile();
+  const blank = { name: "", phone: "", email: "", checkIn: "", checkOut: "", guests: "1", roomType: "", message: "", website: "" };
+  const [f, setF] = useState(blank);
+  const [sending, setSending] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState("");
+  const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
+  const datesOk = f.checkIn && f.checkOut && f.checkOut > f.checkIn;
+  const canSend = f.name.trim().length >= 2 && f.phone.trim().length >= 6 && datesOk && !sending;
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!canSend) return;
+    setError("");
+    // Honeypot: real visitors never see or fill this field. If it has a value
+    // it was a bot, so show a success message and store nothing.
+    if (f.website) { setDone(true); return; }
+    setSending(true);
+    const { error: err } = await supabase.from("reservation_requests").insert({
+      name: f.name.trim().slice(0, 120),
+      phone: f.phone.trim().slice(0, 40),
+      email: f.email.trim().slice(0, 160) || null,
+      check_in: f.checkIn,
+      check_out: f.checkOut,
+      guests: Math.min(Math.max(Number(f.guests) || 1, 1), 20),
+      room_type: f.roomType || null,
+      message: f.message.trim().slice(0, 1000) || null,
+    });
+    setSending(false);
+    if (err) { setError("We couldn't send your request. Please try again, or call us directly."); return; }
+    setDone(true);
+  }
+
+  if (done) {
+    return (
+      <div style={{ padding: "8px 0" }}>
+        <div className="fr" style={{ fontSize: "20px", fontWeight: 500, marginBottom: "8px" }}>Thank you, {f.name.trim().split(" ")[0] || "for your request"}.</div>
+        <p style={{ fontSize: "14px", color: C.inkSoft, lineHeight: 1.6, margin: 0 }}>
+          We've received your enquiry and will contact you on {f.phone.trim()} to confirm your stay.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} noValidate>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "14px" }}>
+        <div>
+          <label style={labelStyle}>Full name *</label>
+          <input style={inputStyle} value={f.name} onChange={set("name")} placeholder="e.g. Halima Juma" />
+        </div>
+        <div>
+          <label style={labelStyle}>Phone or WhatsApp *</label>
+          <input style={inputStyle} value={f.phone} onChange={set("phone")} placeholder="+255 7XX XXX XXX" />
+        </div>
+        <div>
+          <label style={labelStyle}>Check-in *</label>
+          <input type="date" style={inputStyle} value={f.checkIn} onChange={set("checkIn")} />
+        </div>
+        <div>
+          <label style={labelStyle}>Check-out *</label>
+          <input type="date" style={inputStyle} value={f.checkOut} onChange={set("checkOut")} />
+        </div>
+        <div>
+          <label style={labelStyle}>Guests</label>
+          <input type="number" min="1" max="20" style={inputStyle} value={f.guests} onChange={set("guests")} />
+        </div>
+        <div>
+          <label style={labelStyle}>Room type</label>
+          <select style={inputStyle} value={f.roomType} onChange={set("roomType")}>
+            <option value="">Any available</option>
+            {LANDING.roomTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={labelStyle}>Email (optional)</label>
+          <input type="email" style={inputStyle} value={f.email} onChange={set("email")} placeholder="you@example.com" />
+        </div>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={labelStyle}>Anything we should know?</label>
+          <textarea rows={3} style={{ ...inputStyle, resize: "vertical" }} value={f.message} onChange={set("message")} placeholder="Arrival time, special requests, number of nights…" />
+        </div>
+      </div>
+
+      {/* Honeypot: hidden from people, visible to form-filling bots */}
+      <div aria-hidden="true" style={{ position: "absolute", left: "-9999px", width: "1px", height: "1px", overflow: "hidden" }}>
+        <label>Website<input tabIndex={-1} autoComplete="off" value={f.website} onChange={set("website")} /></label>
+      </div>
+
+      {f.checkIn && f.checkOut && !datesOk && (
+        <p style={{ fontSize: "12.5px", color: C.red, margin: "12px 0 0" }}>Check-out must be after check-in.</p>
+      )}
+      {error && <p style={{ fontSize: "12.5px", color: C.red, margin: "12px 0 0" }}>{error}</p>}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap", marginTop: "18px" }}>
+        <span style={{ fontSize: "12px", color: C.inkSoft }}>* required. This is an enquiry; we confirm by phone.</span>
+        <button
+          type="submit"
+          disabled={!canSend}
+          style={{ background: canSend ? C.clay : C.line, color: canSend ? "#fff" : C.inkSoft, border: "none", borderRadius: "8px", padding: "12px 22px", fontSize: "14.5px", fontWeight: 500, cursor: canSend ? "pointer" : "default", opacity: sending ? 0.7 : 1 }}
+        >
+          {sending ? "Sending…" : "Send reservation request"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// Staff inbox for reservation enquiries, shown at the top of the Inquiries tab.
+function ReservationRequestsPanel({ rows, onStatus }) {
+  const open = rows.filter((r) => r.status === "new" || r.status === "contacted");
+  return (
+    <Panel title={`Reservation requests${open.length ? ` (${open.length} open)` : ""}`}>
+      {rows.length === 0 && <p style={{ fontSize: "13.5px", color: C.inkSoft, margin: 0 }}>No reservation requests yet. They appear here when someone uses the form on the landing page.</p>}
+      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        {rows.map((r) => (
+          <div key={r.id} style={{ border: `1px solid ${C.line}`, borderRadius: "9px", padding: "12px", display: "flex", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
+            <div style={{ minWidth: "220px", flex: 1 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 600, fontSize: "13.5px" }}>{r.name}</span>
+                <Pill tone={r.status}>{r.status}</Pill>
+              </div>
+              <div style={{ fontSize: "13px", marginTop: "4px" }}>
+                <a href={`tel:${r.phone.replace(/\s/g, "")}`} style={{ color: C.clayDeep }}>{r.phone}</a>
+                {r.email && <> · <a href={`mailto:${r.email}`} style={{ color: C.clayDeep }}>{r.email}</a></>}
+              </div>
+              <div style={{ fontSize: "13px", color: C.inkSoft, marginTop: "4px" }}>
+                {formatDateRange(r.check_in, r.check_out)} · {r.guests} guest{r.guests === 1 ? "" : "s"}{r.room_type ? ` · ${r.room_type}` : " · any room"}
+              </div>
+              {r.message && <div style={{ fontSize: "13px", marginTop: "6px", fontStyle: "italic", color: C.inkSoft }}>"{r.message}"</div>}
+              <div style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "6px" }}>Received {new Date(r.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</div>
+            </div>
+            <div style={{ display: "flex", gap: "6px", alignItems: "flex-start", flexWrap: "wrap" }}>
+              {r.status === "new" && <button onClick={() => onStatus(r.id, "contacted")} style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 11px", cursor: "pointer" }}>Mark contacted</button>}
+              {(r.status === "new" || r.status === "contacted") && <button onClick={() => onStatus(r.id, "confirmed")} style={{ fontSize: "12.5px", border: "none", background: C.ink, color: "#fff", borderRadius: "6px", padding: "6px 11px", cursor: "pointer" }}>Mark confirmed</button>}
+              {(r.status === "new" || r.status === "contacted") && <button onClick={() => onStatus(r.id, "closed")} style={{ fontSize: "12.5px", border: `1px solid ${C.line}`, background: "none", color: C.inkSoft, borderRadius: "6px", padding: "6px 11px", cursor: "pointer" }}>Close</button>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+}
 
 function Landing({ onGuest, onStaff }) {
   const isMobile = useIsMobile();
+  const contactRows = [
+    { icon: MapPin, label: BUSINESS.address, href: BUSINESS.mapsUrl, action: "Open in Google Maps" },
+    { icon: Phone, label: BUSINESS.phone, href: `tel:${BUSINESS.phoneDial}`, action: "Call" },
+    { icon: MessageCircle, label: `WhatsApp ${BUSINESS.phone}`, href: `https://wa.me/${BUSINESS.whatsapp}`, action: "Message us" },
+    ...(BUSINESS.email ? [{ icon: Mail, label: BUSINESS.email, href: `mailto:${BUSINESS.email}`, action: "Email" }] : []),
+  ];
+  const timeRows = [
+    ...(BUSINESS.checkInTime ? [{ icon: Clock, label: `Check-in from ${BUSINESS.checkInTime}` }] : []),
+    ...(BUSINESS.checkOutTime ? [{ icon: Clock, label: `Check-out by ${BUSINESS.checkOutTime}` }] : []),
+  ];
+  const sectionStyle = { marginBottom: "56px" };
+  const headingStyle = { fontSize: "24px", fontWeight: 500, margin: "0 0 18px" };
+
   return (
     <div className="ws" style={{ minHeight: "100vh", background: C.paper, color: C.ink }}>
       {FONTS}
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: isMobile ? "16px" : "20px 32px", borderBottom: `1px solid ${C.line}` }}>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: isMobile ? "16px" : "20px 32px", borderBottom: `1px solid ${C.line}`, position: "sticky", top: 0, background: C.paper, zIndex: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
           <img src="/matondo-logo.svg" alt="" width="28" height="28" style={{ borderRadius: "8px" }} />
-          <span className="fr" style={{ fontSize: "18px", fontWeight: 500 }}>{LANDING.name}</span>
+          <span className="fr" style={{ fontSize: isMobile ? "15px" : "18px", fontWeight: 500 }}>{LANDING.name}</span>
         </div>
-        <button onClick={onGuest} style={{ fontSize: "13.5px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "8px 14px", cursor: "pointer", color: C.ink }}>
-          I have an access code
-        </button>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <a href="#reserve" style={{ fontSize: "13.5px", background: C.clay, color: "#fff", borderRadius: "8px", padding: "8px 14px", textDecoration: "none" }}>Reserve</a>
+          <button onClick={onGuest} style={{ fontSize: "13.5px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "8px 14px", cursor: "pointer", color: C.ink }}>
+            Access code
+          </button>
+        </div>
       </header>
 
       <main style={{ maxWidth: "880px", margin: "0 auto", padding: isMobile ? "40px 18px" : "72px 32px" }}>
         <h1 className="fr" style={{ fontSize: isMobile ? "32px" : "46px", fontWeight: 500, lineHeight: 1.15, margin: "0 0 18px" }}>{LANDING.pitch}</h1>
         <p style={{ fontSize: isMobile ? "15px" : "17px", color: C.inkSoft, lineHeight: 1.6, maxWidth: "640px", margin: "0 0 32px" }}>{LANDING.intro}</p>
         <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "56px" }}>
-          <a href={LANDING.contactHref} style={{ background: C.clay, color: "#fff", borderRadius: "8px", padding: "12px 20px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
-            {LANDING.contactLabel}
+          <a href="#reserve" style={{ background: C.clay, color: "#fff", borderRadius: "8px", padding: "12px 20px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
+            Make a reservation
           </a>
           <button onClick={onGuest} style={{ background: "none", color: C.ink, border: `1px solid ${C.line}`, borderRadius: "8px", padding: "12px 20px", fontSize: "14.5px", cursor: "pointer" }}>
             Enter your access code
           </button>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: "16px", marginBottom: "56px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: "16px", ...sectionStyle }}>
           {LANDING.features.map((f) => (
             <div key={f.title} style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "22px" }}>
               <div className="fr" style={{ fontSize: "18px", fontWeight: 500, marginBottom: "8px" }}>{f.title}</div>
@@ -4855,12 +5057,47 @@ function Landing({ onGuest, onStaff }) {
           ))}
         </div>
 
+        <section id="reserve" style={{ ...sectionStyle, background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "14px", padding: isMobile ? "22px" : "32px", scrollMarginTop: "80px" }}>
+          <h2 className="fr" style={headingStyle}>Make a reservation</h2>
+          <p style={{ fontSize: "14px", color: C.inkSoft, margin: "-8px 0 22px", lineHeight: 1.55 }}>Tell us when you'd like to stay. We'll confirm availability and your booking by phone or WhatsApp.</p>
+          <ReservationForm />
+        </section>
+
+        <section style={sectionStyle}>
+          <h2 className="fr" style={headingStyle}>Find us</h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            {contactRows.map((row) => {
+              const Icon = row.icon;
+              return (
+                <div key={row.label} style={{ display: "flex", alignItems: "center", gap: "14px", background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "10px", padding: "14px 16px" }}>
+                  <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: C.signalSoft, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Icon size={17} color="#1E6E67" />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0, fontSize: "14.5px" }}>{row.label}</div>
+                  <a href={row.href} target="_blank" rel="noopener noreferrer" style={{ fontSize: "13px", color: C.clayDeep, textDecoration: "none", whiteSpace: "nowrap" }}>{row.action} →</a>
+                </div>
+              );
+            })}
+            {timeRows.map((row) => {
+              const Icon = row.icon;
+              return (
+                <div key={row.label} style={{ display: "flex", alignItems: "center", gap: "14px", background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "10px", padding: "14px 16px" }}>
+                  <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: C.paper, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Icon size={17} color={C.inkSoft} />
+                  </div>
+                  <div style={{ fontSize: "14.5px" }}>{row.label}</div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
         <p style={{ fontSize: "14px", color: C.inkSoft, borderTop: `1px solid ${C.line}`, paddingTop: "24px", margin: 0 }}>{LANDING.audience}</p>
       </main>
 
       <footer style={{ padding: "24px 32px", borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", fontSize: "12.5px", color: C.inkSoft }}>
         <span>© {new Date().getFullYear()} {LANDING.name}</span>
-        <span>{LANDING.contactText}</span>
+        <span>{BUSINESS.phone}</span>
         <button onClick={onStaff} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "12.5px", cursor: "pointer", padding: 0 }}>Staff sign-in</button>
       </footer>
     </div>
