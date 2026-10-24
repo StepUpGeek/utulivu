@@ -4805,16 +4805,17 @@ function GuestApp({ onExit, initialCode }) {
    PLACEHOLDERS: replace the pitch and contact details before launch.
 --------------------------------------------------------- */
 const LANDING = {
-  pitch: "Run your guesthouse calmly, from one place.",
-  intro: "Bookings, guest requests, payments and room access, kept together so your team spends less time chasing and more time hosting.",
+  name: "Matondo Guest House",
+  pitch: "Welcome to Matondo Guest House.",
+  intro: "A calm place to stay. Check your booking, see your bill, and send a request to the front desk, all from your phone.",
   features: [
-    { title: "Bookings made simple", text: "Create stays in seconds, see every room at a glance, and keep dates from clashing." },
-    { title: "A guest portal, ready to go", text: "Guests open their stay with a code or QR and see their booking, bill and requests." },
-    { title: "Payments you can trust", text: "Record deposits and balances as they happen, with a clear running total for every stay." },
+    { title: "Your stay, in one place", text: "Open your stay with your access code or QR. See your room, your dates and your booking at a glance." },
+    { title: "Requests that get done", text: "Ask the front desk for anything you need, then follow it until it's taken care of." },
+    { title: "Clear billing", text: "See what you owe, what you've paid and your remaining balance, at any time during your stay." },
   ],
-  audience: "Built for small guesthouses and hotels that want to run well without a large back office.",
-  contactLabel: "Talk to us about getting started",
-  contactHref: "mailto:hello@example.com", // PLACEHOLDER
+  audience: "Matondo Guest House, a quiet place to rest and recharge.",
+  contactLabel: "Make an enquiry about a stay",
+  contactHref: "mailto:hello@example.com", // PLACEHOLDER: replace with the guesthouse's email
   contactText: "hello@example.com", // PLACEHOLDER
 };
 
@@ -4826,7 +4827,7 @@ function Landing({ onGuest, onStaff }) {
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: isMobile ? "16px" : "20px 32px", borderBottom: `1px solid ${C.line}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
           <img src="/matondo-logo.svg" alt="" width="28" height="28" style={{ borderRadius: "8px" }} />
-          <span className="fr" style={{ fontSize: "18px", fontWeight: 500 }}>Matondo Guest House</span>
+          <span className="fr" style={{ fontSize: "18px", fontWeight: 500 }}>{LANDING.name}</span>
         </div>
         <button onClick={onGuest} style={{ fontSize: "13.5px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "8px 14px", cursor: "pointer", color: C.ink }}>
           I have an access code
@@ -4858,7 +4859,7 @@ function Landing({ onGuest, onStaff }) {
       </main>
 
       <footer style={{ padding: "24px 32px", borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", fontSize: "12.5px", color: C.inkSoft }}>
-        <span>© {new Date().getFullYear()} Matondo Guest House</span>
+        <span>© {new Date().getFullYear()} {LANDING.name}</span>
         <span>{LANDING.contactText}</span>
         <button onClick={onStaff} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "12.5px", cursor: "pointer", padding: 0 }}>Staff sign-in</button>
       </footer>
