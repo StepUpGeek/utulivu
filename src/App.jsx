@@ -4444,11 +4444,6 @@ function GuestApp({ onExit, initialCode, lang, setLang }) {
           <p style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "12px" }}>
             {g("lostCode")}
           </p>
-          {onExit && (
-            <button onClick={onExit} style={{ width: "100%", marginTop: "10px", padding: "9px", borderRadius: "8px", border: `1px solid ${C.line}`, background: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
-              ← Choose a different portal
-            </button>
-          )}
         </div>
       </div>
     );
@@ -4604,11 +4599,6 @@ function GuestApp({ onExit, initialCode, lang, setLang }) {
           <button onClick={switchGuest} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
             {g("notYou")}
           </button>
-          {onExit && (
-            <button onClick={onExit} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
-              ← Choose a different portal
-            </button>
-          )}
         </div>
         </>
         )}
@@ -5246,9 +5236,8 @@ function Landing({ onGuest, lang, setLang }) {
         </section>
       </main>
 
-      <footer style={{ padding: "24px 32px", borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", fontSize: "12.5px", color: C.inkSoft }}>
-        <span>© {new Date().getFullYear()} {LANDING.name}</span>
-        <span>{BUSINESS.phone}</span>
+      <footer style={{ padding: "28px 24px", borderTop: `1px solid ${C.line}`, textAlign: "center", fontSize: "12.5px", color: C.inkSoft, lineHeight: 1.7 }}>
+        <div style={{ fontSize: "11px", letterSpacing: "0.04em" }}>PLATFORM DEVELOPED AND MAINTAINED BY Bits And Bots</div>
       </footer>
     </div>
   );
