@@ -46,6 +46,18 @@ const FONTS = (
       100% { box-shadow: 0 0 0 22px rgba(47,158,150,0); }
     }
     .tap-ripple { animation: ripple 1s ease-out; }
+    @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+    .rise { animation: rise 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+    .cta:hover { transform: translateY(-1px); }
+    .cta { transition: transform 150ms ease; }
+    .resv input:focus, .resv textarea:focus, .resv select:focus {
+      outline: none !important; border-color: ${C.clay} !important;
+      box-shadow: 0 0 0 3px rgba(181,103,58,0.15) !important;
+    }
+    .resv input, .resv textarea { transition: border-color 150ms ease, box-shadow 150ms ease; }
+    @media (prefers-reduced-motion: reduce) {
+      .rise, .cta { animation: none !important; transition: none !important; }
+    }
   `}</style>
 );
 
@@ -4842,8 +4854,86 @@ const BUSINESS = {
 
 const LANDING = {
   name: BUSINESS.name,
-  pitch: "Welcome to Matondo Guest House.",
-  intro: "A calm place to stay, with everything you need on your phone.",
+  roomTypes: [],
+};
+
+// Landing page text in five languages. Arabic is set right-to-left.
+// Swahili, Arabic and Chinese should be checked by a native speaker before launch.
+const LANG_OPTIONS = [
+  { code: "en", label: "English" },
+  { code: "sw", label: "Kiswahili" },
+  { code: "fr", label: "Français" },
+  { code: "ar", label: "العربية" },
+  { code: "zh", label: "中文" },
+];
+const DATE_LOCALE = { en: "en-GB", sw: "sw-TZ", fr: "fr-FR", ar: "ar", zh: "zh-CN" };
+
+const T = {
+  en: {
+    welcome: "Welcome to Matondo Guest House",
+    intro: "A calm place to stay, with everything you need on your phone.",
+    reserve: "Make a reservation", access: "Access your stay",
+    getInTouch: "Get in touch", address: "Address", openMaps: "Open in Google Maps →",
+    whatsapp: "Message on WhatsApp", call: "Call",
+    formTitle: "Make a reservation", formIntro: "Tell us when you'd like to stay. We'll call you to confirm.",
+    name: "Your name", phone: "Phone or WhatsApp", arriving: "Arriving", nights: "Number of nights",
+    leaving: "Leaving", note: "Anything we should know? (optional)", notePh: "Arrival time, special requests…",
+    send: "Send reservation request", sending: "Sending…", required: "* required. We confirm by phone.",
+    night: "night", nightsWord: "nights",
+    thanks: (n, p) => `Thank you, ${n}. We've received your request and will call you on ${p} to confirm your stay.`,
+  },
+  sw: {
+    welcome: "Karibu Matondo Guest House",
+    intro: "Mahali pa utulivu pa kukaa, chenye kila unachohitaji kwenye simu yako.",
+    reserve: "Weka nafasi", access: "Ingia kwenye ukaaji wako",
+    getInTouch: "Wasiliana nasi", address: "Anwani", openMaps: "Fungua Ramani za Google →",
+    whatsapp: "Tuma ujumbe WhatsApp", call: "Piga simu",
+    formTitle: "Weka nafasi", formIntro: "Tuambie unapotaka kukaa. Tutakupigia simu kuthibitisha.",
+    name: "Jina lako", phone: "Simu au WhatsApp", arriving: "Unawasili", nights: "Idadi ya usiku",
+    leaving: "Unaondoka", note: "Kuna jambo la kujua? (si lazima)", notePh: "Muda wa kufika, maombi maalum…",
+    send: "Tuma ombi la nafasi", sending: "Inatuma…", required: "* lazima. Tunathibitisha kwa simu.",
+    night: "usiku", nightsWord: "usiku",
+    thanks: (n, p) => `Asante ${n}. Tumepokea ombi lako na tutakupigia simu kwa ${p} kuthibitisha ukaaji wako.`,
+  },
+  fr: {
+    welcome: "Bienvenue à Matondo Guest House",
+    intro: "Un séjour paisible, avec tout ce dont vous avez besoin sur votre téléphone.",
+    reserve: "Réserver", access: "Accéder à votre séjour",
+    getInTouch: "Contactez-nous", address: "Adresse", openMaps: "Ouvrir dans Google Maps →",
+    whatsapp: "Écrire sur WhatsApp", call: "Appeler",
+    formTitle: "Réserver une chambre", formIntro: "Dites-nous quand vous souhaitez venir. Nous vous appellerons pour confirmer.",
+    name: "Votre nom", phone: "Téléphone ou WhatsApp", arriving: "Arrivée", nights: "Nombre de nuits",
+    leaving: "Départ", note: "Autre chose à savoir ? (facultatif)", notePh: "Heure d'arrivée, demandes particulières…",
+    send: "Envoyer la demande", sending: "Envoi…", required: "* obligatoire. Nous confirmons par téléphone.",
+    night: "nuit", nightsWord: "nuits",
+    thanks: (n, p) => `Merci ${n}. Nous avons bien reçu votre demande et vous appellerons au ${p} pour confirmer votre séjour.`,
+  },
+  ar: {
+    welcome: "مرحباً بكم في ماتوندو غست هاوس",
+    intro: "مكان هادئ للإقامة، وكل ما تحتاجه على هاتفك.",
+    reserve: "احجز الآن", access: "الدخول إلى إقامتك",
+    getInTouch: "تواصل معنا", address: "العنوان", openMaps: "فتح في خرائط جوجل ←",
+    whatsapp: "راسلنا عبر واتساب", call: "اتصل بنا",
+    formTitle: "احجز إقامتك", formIntro: "أخبرنا متى ترغب في الحضور، وسنتصل بك للتأكيد.",
+    name: "اسمك", phone: "الهاتف أو واتساب", arriving: "تاريخ الوصول", nights: "عدد الليالي",
+    leaving: "تاريخ المغادرة", note: "هل هناك ما يجب أن نعرفه؟ (اختياري)", notePh: "وقت الوصول، طلبات خاصة…",
+    send: "إرسال طلب الحجز", sending: "جارٍ الإرسال…", required: "* مطلوب. نؤكد الحجز عبر الهاتف.",
+    night: "ليلة", nightsWord: "ليالٍ",
+    thanks: (n, p) => `شكراً ${n}. استلمنا طلبك وسنتصل بك على ${p} لتأكيد إقامتك.`,
+  },
+  zh: {
+    welcome: "欢迎来到 Matondo 民宿",
+    intro: "一个宁静的居所，手机上即可获得您所需的一切。",
+    reserve: "预订", access: "进入您的住宿",
+    getInTouch: "联系我们", address: "地址", openMaps: "在谷歌地图中打开 →",
+    whatsapp: "发送 WhatsApp 消息", call: "致电",
+    formTitle: "预订住宿", formIntro: "请告诉我们您想入住的时间，我们会致电确认。",
+    name: "您的姓名", phone: "电话或 WhatsApp", arriving: "入住日期", nights: "入住晚数",
+    leaving: "退房日期", note: "还有需要了解的事项吗？（可选）", notePh: "到达时间、特殊要求…",
+    send: "提交预订请求", sending: "提交中…", required: "* 必填。我们将通过电话确认。",
+    night: "晚", nightsWord: "晚",
+    thanks: (n, p) => `谢谢${n}。我们已收到您的请求，将致电 ${p} 确认您的住宿。`,
+  },
 };
 
 const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${C.line}`, fontSize: "14px", boxSizing: "border-box", background: "#fff", fontFamily: "inherit" };
@@ -4860,9 +4950,9 @@ function addDaysISO(dateStr, days) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-function ReservationForm() {
+function ReservationForm({ t, lang }) {
   const isMobile = useIsMobile();
-  const blank = { name: "", phone: "", arriving: "", nights: "1", guests: "1", message: "", website: "" };
+  const blank = { name: "", phone: "", arriving: "", nights: "1", message: "", website: "" };
   const [f, setF] = useState(blank);
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);
@@ -4871,6 +4961,7 @@ function ReservationForm() {
   const nights = Math.min(Math.max(Number(f.nights) || 1, 1), 60);
   const checkOut = f.arriving ? addDaysISO(f.arriving, nights) : "";
   const canSend = f.name.trim().length >= 2 && f.phone.trim().length >= 6 && !!f.arriving && !sending;
+  const fmt = (iso) => new Date(iso + "T00:00:00").toLocaleDateString(DATE_LOCALE[lang] || "en-GB", { day: "numeric", month: "short" });
 
   async function submit(e) {
     e.preventDefault();
@@ -4885,7 +4976,6 @@ function ReservationForm() {
       phone: f.phone.trim().slice(0, 40),
       check_in: f.arriving,
       check_out: checkOut,
-      guests: Math.min(Math.max(Number(f.guests) || 1, 1), 20),
       message: f.message.trim().slice(0, 1000) || null,
     });
     setSending(false);
@@ -4894,47 +4984,43 @@ function ReservationForm() {
   }
 
   if (done) {
+    const firstName = f.name.trim().split(" ")[0] || f.name.trim();
     return (
-      <div style={{ padding: "8px 0" }}>
-        <div className="fr" style={{ fontSize: "20px", fontWeight: 500, marginBottom: "8px" }}>Thank you, {f.name.trim().split(" ")[0] || "for your request"}.</div>
-        <p style={{ fontSize: "14px", color: C.inkSoft, lineHeight: 1.6, margin: 0 }}>
-          We've received your request and will call you on {f.phone.trim()} to confirm your stay.
-        </p>
+      <div className="rise" style={{ padding: "8px 0" }}>
+        <div style={{ width: "44px", height: "44px", borderRadius: "50%", background: C.signalSoft, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "14px" }}>
+          <Check size={20} color="#1E6E67" />
+        </div>
+        <p className="fr" style={{ fontSize: "19px", lineHeight: 1.5, margin: 0 }}>{t.thanks(firstName, f.phone.trim())}</p>
       </div>
     );
   }
 
+  const summary = f.arriving && checkOut
+    ? `${fmt(f.arriving)} → ${fmt(checkOut)} · ${nights} ${nights === 1 ? t.night : t.nightsWord}`
+    : "";
+
   return (
-    <form onSubmit={submit} noValidate>
+    <form className="resv" onSubmit={submit} noValidate>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "14px" }}>
         <div>
-          <label style={labelStyle}>Your name *</label>
+          <label style={labelStyle}>{t.name} *</label>
           <input style={inputStyle} value={f.name} onChange={set("name")} placeholder="e.g. Halima Juma" />
         </div>
         <div>
-          <label style={labelStyle}>Phone or WhatsApp *</label>
+          <label style={labelStyle}>{t.phone} *</label>
           <input style={inputStyle} value={f.phone} onChange={set("phone")} placeholder="+255 7XX XXX XXX" />
         </div>
         <div>
-          <label style={labelStyle}>Arriving *</label>
+          <label style={labelStyle}>{t.arriving} *</label>
           <input type="date" style={inputStyle} value={f.arriving} onChange={set("arriving")} />
         </div>
         <div>
-          <label style={labelStyle}>Number of nights</label>
+          <label style={labelStyle}>{t.nights}</label>
           <input type="number" min="1" max="60" style={inputStyle} value={f.nights} onChange={set("nights")} />
         </div>
-        <div>
-          <label style={labelStyle}>Guests</label>
-          <input type="number" min="1" max="20" style={inputStyle} value={f.guests} onChange={set("guests")} />
-        </div>
-        <div style={{ display: "flex", alignItems: "flex-end" }}>
-          {f.arriving ? (
-            <span style={{ fontSize: "12.5px", color: C.inkSoft, paddingBottom: "10px" }}>Leaving {checkOut}</span>
-          ) : null}
-        </div>
         <div style={{ gridColumn: "1 / -1" }}>
-          <label style={labelStyle}>Anything we should know? (optional)</label>
-          <textarea rows={3} style={{ ...inputStyle, resize: "vertical" }} value={f.message} onChange={set("message")} placeholder="Arrival time, special requests…" />
+          <label style={labelStyle}>{t.note}</label>
+          <textarea rows={3} style={{ ...inputStyle, resize: "vertical" }} value={f.message} onChange={set("message")} placeholder={t.notePh} />
         </div>
       </div>
 
@@ -4943,16 +5029,21 @@ function ReservationForm() {
         <label>Website<input tabIndex={-1} autoComplete="off" value={f.website} onChange={set("website")} /></label>
       </div>
 
+      {summary && (
+        <div className="rise" style={{ marginTop: "16px", padding: "10px 14px", borderRadius: "8px", background: C.paper, fontSize: "13.5px", color: C.ink }}>
+          <span style={{ color: C.inkSoft }}>{t.leaving}: </span>{summary}
+        </div>
+      )}
       {error && <p style={{ fontSize: "12.5px", color: C.red, margin: "12px 0 0" }}>{error}</p>}
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap", marginTop: "18px" }}>
-        <span style={{ fontSize: "12px", color: C.inkSoft }}>* required. We confirm by phone.</span>
+        <span style={{ fontSize: "12px", color: C.inkSoft }}>{t.required}</span>
         <button
           type="submit"
           disabled={!canSend}
-          style={{ background: canSend ? C.clay : C.line, color: canSend ? "#fff" : C.inkSoft, border: "none", borderRadius: "8px", padding: "12px 22px", fontSize: "14.5px", fontWeight: 500, cursor: canSend ? "pointer" : "default", opacity: sending ? 0.7 : 1 }}
+          style={{ background: canSend ? C.clay : C.line, color: canSend ? "#fff" : C.inkSoft, border: "none", borderRadius: "8px", padding: "12px 22px", fontSize: "14.5px", fontWeight: 500, cursor: canSend ? "pointer" : "default", transition: "transform 150ms ease, background 150ms ease" }}
         >
-          {sending ? "Sending…" : "Send reservation request"}
+          {sending ? t.sending : t.send}
         </button>
       </div>
     </form>
@@ -4975,10 +5066,9 @@ function ReservationRequestsPanel({ rows, onStatus }) {
               </div>
               <div style={{ fontSize: "13px", marginTop: "4px" }}>
                 <a href={`tel:${r.phone.replace(/\s/g, "")}`} style={{ color: C.clayDeep }}>{r.phone}</a>
-                {r.email && <> · <a href={`mailto:${r.email}`} style={{ color: C.clayDeep }}>{r.email}</a></>}
               </div>
               <div style={{ fontSize: "13px", color: C.inkSoft, marginTop: "4px" }}>
-                {formatDateRange(r.check_in, r.check_out)} · {r.guests} guest{r.guests === 1 ? "" : "s"}{r.room_type ? ` · ${r.room_type}` : " · any room"}
+                {formatDateRange(r.check_in, r.check_out)}
               </div>
               {r.message && <div style={{ fontSize: "13px", marginTop: "6px", fontStyle: "italic", color: C.inkSoft }}>"{r.message}"</div>}
               <div style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "6px" }}>Received {new Date(r.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</div>
@@ -4997,61 +5087,85 @@ function ReservationRequestsPanel({ rows, onStatus }) {
 
 function Landing({ onGuest }) {
   const isMobile = useIsMobile();
+  const [lang, setLang] = useState("en");
+  const t = T[lang];
+  const rtl = lang === "ar";
   const sectionStyle = { marginBottom: "56px" };
   const headingStyle = { fontSize: "24px", fontWeight: 500, margin: "0 0 18px" };
 
   return (
-    <div className="ws" style={{ minHeight: "100vh", background: C.paper, color: C.ink }}>
+    <div className="ws" dir={rtl ? "rtl" : "ltr"} style={{ minHeight: "100vh", background: C.paper, color: C.ink }}>
       {FONTS}
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: isMobile ? "16px" : "20px 32px", borderBottom: `1px solid ${C.line}`, position: "sticky", top: 0, background: C.paper, zIndex: 2 }}>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", padding: isMobile ? "14px 16px" : "20px 32px", borderBottom: `1px solid ${C.line}`, position: "sticky", top: 0, background: C.paper, zIndex: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
           <img src="/matondo-logo.svg" alt="" width="28" height="28" style={{ borderRadius: "8px" }} />
           <span className="fr" style={{ fontSize: isMobile ? "15px" : "18px", fontWeight: 500 }}>{LANDING.name}</span>
         </div>
-        <button onClick={onGuest} style={{ fontSize: "13.5px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "8px 14px", cursor: "pointer", color: C.ink }}>
-          Access your stay
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <select
+            value={lang}
+            onChange={(e) => setLang(e.target.value)}
+            aria-label="Language"
+            style={{ fontSize: "13px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "7px 8px", color: C.ink }}
+          >
+            {LANG_OPTIONS.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
+          </select>
+          {!isMobile && (
+            <button onClick={onGuest} style={{ fontSize: "13.5px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "8px 14px", cursor: "pointer", color: C.ink }}>
+              {t.access}
+            </button>
+          )}
+        </div>
       </header>
 
       <main style={{ maxWidth: "880px", margin: "0 auto", padding: isMobile ? "40px 18px" : "72px 32px" }}>
-        <h1 className="fr" style={{ fontSize: isMobile ? "32px" : "46px", fontWeight: 500, lineHeight: 1.15, margin: "0 0 18px" }}>{LANDING.pitch}</h1>
-        <p style={{ fontSize: isMobile ? "15px" : "17px", color: C.inkSoft, lineHeight: 1.6, maxWidth: "640px", margin: "0 0 32px" }}>{LANDING.intro}</p>
-        <div style={{ marginBottom: "64px" }}>
-          <a href="#reserve" style={{ display: "inline-block", background: C.clay, color: "#fff", borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
-            Make a reservation
+        <div className="rise" key={`h-${lang}`} style={{ animationDelay: "0s" }}>
+          <h1 className="fr" style={{ fontSize: isMobile ? "32px" : "46px", fontWeight: 500, lineHeight: 1.15, margin: "0 0 18px" }}>{t.welcome}</h1>
+        </div>
+        <div className="rise" key={`i-${lang}`} style={{ animationDelay: "0.15s" }}>
+          <p style={{ fontSize: isMobile ? "15px" : "17px", color: C.inkSoft, lineHeight: 1.6, maxWidth: "640px", margin: "0 0 32px" }}>{t.intro}</p>
+        </div>
+        <div className="rise" key={`b-${lang}`} style={{ animationDelay: "0.3s", display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "64px" }}>
+          <a href="#reserve" className="cta" style={{ display: "inline-block", background: C.clay, color: "#fff", borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
+            {t.reserve}
           </a>
+          {isMobile && (
+            <button onClick={onGuest} style={{ background: "none", color: C.ink, border: `1px solid ${C.line}`, borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", cursor: "pointer" }}>
+              {t.access}
+            </button>
+          )}
         </div>
 
         <section id="reserve" style={{ ...sectionStyle, background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "14px", padding: isMobile ? "22px" : "32px", scrollMarginTop: "80px" }}>
-          <h2 className="fr" style={headingStyle}>Make a reservation</h2>
-          <p style={{ fontSize: "14px", color: C.inkSoft, margin: "-8px 0 22px", lineHeight: 1.55 }}>Tell us when you'd like to stay. We'll confirm availability and your booking by phone or WhatsApp.</p>
-          <ReservationForm />
+          <h2 className="fr" style={headingStyle}>{t.formTitle}</h2>
+          <p style={{ fontSize: "14px", color: C.inkSoft, margin: "-8px 0 22px", lineHeight: 1.55 }}>{t.formIntro}</p>
+          <ReservationForm t={t} lang={lang} />
         </section>
 
         <section style={sectionStyle}>
-          <h2 className="fr" style={headingStyle}>Get in touch</h2>
+          <h2 className="fr" style={headingStyle}>{t.getInTouch}</h2>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "16px" }}>
             <div style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "22px", display: "flex", flexDirection: "column", gap: "12px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "8px", color: C.clayDeep }}>
                 <MapPin size={16} />
-                <span style={{ fontSize: "11.5px", textTransform: "uppercase", letterSpacing: "0.06em", color: C.inkSoft }}>Address</span>
+                <span style={{ fontSize: "11.5px", textTransform: "uppercase", letterSpacing: "0.06em", color: C.inkSoft }}>{t.address}</span>
               </div>
               <div className="fr" style={{ fontSize: "19px", fontWeight: 500, lineHeight: 1.35 }}>{BUSINESS.address}</div>
               {(BUSINESS.checkInTime || BUSINESS.checkOutTime) && (
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px", color: C.inkSoft }}>
-                  {BUSINESS.checkInTime && <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><Clock size={13} /> Check-in from {BUSINESS.checkInTime}</span>}
-                  {BUSINESS.checkOutTime && <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><Clock size={13} /> Check-out by {BUSINESS.checkOutTime}</span>}
+                  {BUSINESS.checkInTime && <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><Clock size={13} /> {BUSINESS.checkInTime}</span>}
+                  {BUSINESS.checkOutTime && <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><Clock size={13} /> {BUSINESS.checkOutTime}</span>}
                 </div>
               )}
-              <a href={BUSINESS.mapsUrl} target="_blank" rel="noopener noreferrer" style={{ marginTop: "auto", fontSize: "13.5px", color: C.clayDeep, textDecoration: "none" }}>Open in Google Maps →</a>
+              <a href={BUSINESS.mapsUrl} target="_blank" rel="noopener noreferrer" style={{ marginTop: "auto", fontSize: "13.5px", color: C.clayDeep, textDecoration: "none" }}>{t.openMaps}</a>
             </div>
 
             <div style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "22px", display: "flex", flexDirection: "column", gap: "10px", justifyContent: "center" }}>
               <a href={`https://wa.me/${BUSINESS.whatsapp}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: C.signal, color: "#fff", borderRadius: "8px", padding: "13px 16px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
-                <MessageCircle size={17} /> Message on WhatsApp
+                <MessageCircle size={17} /> {t.whatsapp}
               </a>
               <a href={`tel:${BUSINESS.phoneDial}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: "none", color: C.ink, border: `1px solid ${C.line}`, borderRadius: "8px", padding: "13px 16px", fontSize: "14.5px", textDecoration: "none" }}>
-                <Phone size={17} /> Call {BUSINESS.phone}
+                <Phone size={17} /> {t.call} {BUSINESS.phone}
               </a>
               {BUSINESS.email && (
                 <a href={`mailto:${BUSINESS.email}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: "none", color: C.inkSoft, borderRadius: "8px", padding: "10px 16px", fontSize: "13.5px", textDecoration: "none" }}>
