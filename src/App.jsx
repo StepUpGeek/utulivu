@@ -28,6 +28,13 @@ const C = {
   red: "#B24C4C",
 };
 
+
+/* ---------------------------------------------------------
+   Feature flags — switch a whole section on or off without
+   deleting its code. Kitchen is off for the first version.
+--------------------------------------------------------- */
+const FEATURES = { kitchen: false };
+
 const FONTS = (
   <style>{`
     @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap');
@@ -759,7 +766,7 @@ function Login({ onSignIn, onBack }) {
           <Radio size={19} color={C.signal} strokeWidth={2.2} />
         </div>
         <h1 className="fr" style={{ margin: "0 0 6px", fontSize: "26px", fontWeight: 500, color: C.ink }}>
-          Utulivu
+          Matondo Guest House
         </h1>
         <p className="ws" style={{ margin: "0 0 26px", fontSize: "14px", color: C.inkSoft }}>
           Sign in to manage your property.
@@ -2160,7 +2167,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
           <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Radio size={14} color={C.signal} />
           </div>
-          <span className="fr" style={{ color: "#fff", fontSize: "16px", fontWeight: 500 }}>Utulivu</span>
+          <span className="fr" style={{ color: "#fff", fontSize: "16px", fontWeight: 500 }}>Matondo</span>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
           {NAV.map((n) => (
@@ -3598,7 +3605,7 @@ function InvoicePrintModal({ data, branch, clientName, serviceNames, services, r
         <div id="invoice-print-area" style={{ padding: "32px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px" }}>
             <div>
-              <div className="fr" style={{ fontSize: "20px", fontWeight: 500, color: C.ink }}>Utulivu</div>
+              <div className="fr" style={{ fontSize: "20px", fontWeight: 500, color: C.ink }}>Matondo Guest House</div>
               <div style={{ fontSize: "12.5px", color: C.inkSoft }}>{branch?.name}</div>
               <div style={{ fontSize: "12.5px", color: C.inkSoft }}>{branch?.location}</div>
             </div>
@@ -4128,7 +4135,7 @@ function OtherServicesList({ items, quantities, setQuantities, requestedIds, sen
 
 const GUEST_TABS = [
   { id: "stay", label: "Stay", icon: Home },
-  { id: "kitchen", label: "Kitchen", icon: UtensilsCrossed },
+  ...(FEATURES.kitchen ? [{ id: "kitchen", label: "Kitchen", icon: UtensilsCrossed }] : []),
   { id: "requests", label: "Requests", icon: Bell },
   { id: "frontdesk", label: "Front desk", icon: Phone },
 ];
@@ -4383,7 +4390,7 @@ function GuestApp({ onExit, initialCode }) {
           <div style={{ width: "40px", height: "40px", borderRadius: "9px", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "20px" }}>
             <Radio size={19} color={C.signal} />
           </div>
-          <h1 className="fr" style={{ margin: "0 0 6px", fontSize: "23px", fontWeight: 500 }}>Welcome to Utulivu</h1>
+          <h1 className="fr" style={{ margin: "0 0 6px", fontSize: "23px", fontWeight: 500 }}>Welcome to Matondo Guest House</h1>
           <p style={{ margin: "0 0 22px", fontSize: "13.5px", color: C.inkSoft, lineHeight: 1.55 }}>
             Your room, your requests and your bill, all in one place. Enter the access code from your booking confirmation to open your stay.
           </p>
@@ -4569,7 +4576,7 @@ function GuestApp({ onExit, initialCode }) {
         {/* Kitchen tab — the photo menu, plus a Kitchen-only slice of the
             guest's own request status so "is my order coming?" doesn't
             require a tab switch right after placing it. */}
-        {guestTab === "kitchen" && (
+        {FEATURES.kitchen && guestTab === "kitchen" && (
           <>
             {guestServices.some((s) => s.category === "Kitchen") && (
               <Panel title="Kitchen menu">
@@ -4607,11 +4614,11 @@ function GuestApp({ onExit, initialCode }) {
             included), so there's one place to check where everything stands. */}
         {guestTab === "requests" && (
           <>
-            {guestServices.some((s) => s.category !== "Kitchen") && (
+            {guestServices.some((s) => s.category !== "Kitchen" || FEATURES.kitchen) && (
               <>
                 <Panel title="Order more">
                   <div style={{ display: "flex", gap: "6px", marginBottom: "14px", flexWrap: "wrap" }}>
-                    {CATEGORY_ORDER.filter((cat) => cat !== "Kitchen" && guestServices.some((s) => s.category === cat)).map((cat) => (
+                    {CATEGORY_ORDER.filter((cat) => (cat !== "Kitchen" || FEATURES.kitchen) && guestServices.some((s) => s.category === cat)).map((cat) => (
                       <button
                         key={cat}
                         onClick={() => setActiveCategory(cat)}
@@ -4790,6 +4797,88 @@ function GuestApp({ onExit, initialCode }) {
    to view. In production these are three separate surfaces;
    here they live in one file for the demo.
 --------------------------------------------------------- */
+
+/* ---------------------------------------------------------
+   Landing page — the public face at the bare domain. Describes the
+   product and sends guests to their access code. Staff sign-in is
+   deliberately not linked here; it lives on its own subdomain.
+   PLACEHOLDERS: replace the pitch and contact details before launch.
+--------------------------------------------------------- */
+const LANDING = {
+  pitch: "Run your guesthouse calmly, from one place.",
+  intro: "Bookings, guest requests, payments and room access, kept together so your team spends less time chasing and more time hosting.",
+  features: [
+    { title: "Bookings made simple", text: "Create stays in seconds, see every room at a glance, and keep dates from clashing." },
+    { title: "A guest portal, ready to go", text: "Guests open their stay with a code or QR and see their booking, bill and requests." },
+    { title: "Payments you can trust", text: "Record deposits and balances as they happen, with a clear running total for every stay." },
+  ],
+  audience: "Built for small guesthouses and hotels that want to run well without a large back office.",
+  contactLabel: "Talk to us about getting started",
+  contactHref: "mailto:hello@example.com", // PLACEHOLDER
+  contactText: "hello@example.com", // PLACEHOLDER
+};
+
+function Landing({ onGuest, onStaff }) {
+  const isMobile = useIsMobile();
+  return (
+    <div className="ws" style={{ minHeight: "100vh", background: C.paper, color: C.ink }}>
+      {FONTS}
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: isMobile ? "16px" : "20px 32px", borderBottom: `1px solid ${C.line}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
+          <img src="/matondo-logo.svg" alt="" width="28" height="28" style={{ borderRadius: "8px" }} />
+          <span className="fr" style={{ fontSize: "18px", fontWeight: 500 }}>Matondo Guest House</span>
+        </div>
+        <button onClick={onGuest} style={{ fontSize: "13.5px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "8px 14px", cursor: "pointer", color: C.ink }}>
+          I have an access code
+        </button>
+      </header>
+
+      <main style={{ maxWidth: "880px", margin: "0 auto", padding: isMobile ? "40px 18px" : "72px 32px" }}>
+        <h1 className="fr" style={{ fontSize: isMobile ? "32px" : "46px", fontWeight: 500, lineHeight: 1.15, margin: "0 0 18px" }}>{LANDING.pitch}</h1>
+        <p style={{ fontSize: isMobile ? "15px" : "17px", color: C.inkSoft, lineHeight: 1.6, maxWidth: "640px", margin: "0 0 32px" }}>{LANDING.intro}</p>
+        <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "56px" }}>
+          <a href={LANDING.contactHref} style={{ background: C.clay, color: "#fff", borderRadius: "8px", padding: "12px 20px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
+            {LANDING.contactLabel}
+          </a>
+          <button onClick={onGuest} style={{ background: "none", color: C.ink, border: `1px solid ${C.line}`, borderRadius: "8px", padding: "12px 20px", fontSize: "14.5px", cursor: "pointer" }}>
+            Enter your access code
+          </button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: "16px", marginBottom: "56px" }}>
+          {LANDING.features.map((f) => (
+            <div key={f.title} style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "22px" }}>
+              <div className="fr" style={{ fontSize: "18px", fontWeight: 500, marginBottom: "8px" }}>{f.title}</div>
+              <div style={{ fontSize: "14px", color: C.inkSoft, lineHeight: 1.55 }}>{f.text}</div>
+            </div>
+          ))}
+        </div>
+
+        <p style={{ fontSize: "14px", color: C.inkSoft, borderTop: `1px solid ${C.line}`, paddingTop: "24px", margin: 0 }}>{LANDING.audience}</p>
+      </main>
+
+      <footer style={{ padding: "24px 32px", borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", fontSize: "12.5px", color: C.inkSoft }}>
+        <span>© {new Date().getFullYear()} Matondo Guest House</span>
+        <span>{LANDING.contactText}</span>
+        <button onClick={onStaff} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "12.5px", cursor: "pointer", padding: 0 }}>Staff sign-in</button>
+      </footer>
+    </div>
+  );
+}
+
+// Staff pages should never appear in search results.
+function useNoIndex(enabled) {
+  useEffect(() => {
+    if (!enabled) return;
+    let tag = document.querySelector('meta[name="robots"]');
+    const created = !tag;
+    if (created) { tag = document.createElement("meta"); tag.name = "robots"; document.head.appendChild(tag); }
+    const previous = tag.content;
+    tag.content = "noindex, nofollow";
+    return () => { if (created) tag.remove(); else tag.content = previous; };
+  }, [enabled]);
+}
+
 function PortalGate({ onSelect, onReset }) {
   const isMobile = useIsMobile();
   const options = [
@@ -4838,8 +4927,10 @@ function PortalGate({ onSelect, onReset }) {
 /* ---------------------------------------------------------
    Top-level router
 --------------------------------------------------------- */
-// A scanned QR arrives as ?code=UTU-1234 — that's enough to know which portal
-// the person wants and which stay to open, so both are read once on load.
+// A scanned QR arrives as ?code=UTU-1234. A subdomain (provider.,
+// operator., guest.) picks its portal directly, so staff never see a picker.
+// The bare domain shows the landing page, and ?portal=picker keeps the old
+// chooser reachable for demos and local development.
 function codeFromUrl() {
   try {
     return new URLSearchParams(window.location.search).get("code") || "";
@@ -4848,10 +4939,39 @@ function codeFromUrl() {
   }
 }
 
+function portalFromHost() {
+  try {
+    const host = window.location.hostname;
+    if (host.startsWith("provider.")) return "provider";
+    if (host.startsWith("operator.")) return "operator";
+    if (host.startsWith("guest.")) return "guest";
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function wantsPicker() {
+  try {
+    return new URLSearchParams(window.location.search).get("portal") === "picker";
+  } catch (e) {
+    return false;
+  }
+}
+
 export default function App() {
-  const [portal, setPortal] = useState(() => (codeFromUrl() ? "guest" : null));
+  const hostPortal = portalFromHost();
+  const [portal, setPortal] = useState(() => {
+    if (hostPortal) return hostPortal;
+    if (codeFromUrl()) return "guest";
+    return null; // landing page
+  });
   const [prefillGuestCode, setPrefillGuestCode] = useState(() => codeFromUrl());
   const [resetKey, setResetKey] = useState(0);
+  // On a subdomain there is nowhere else to go, so "switch portal" is hidden.
+  const onSubdomain = Boolean(hostPortal);
+
+  useNoIndex(portal === "provider" || portal === "operator" || portal === "guest");
 
   async function addAccessCode(entry) {
     const { error } = await supabase.from("access_codes").insert(entry);
@@ -4873,8 +4993,14 @@ export default function App() {
     setResetKey((k) => k + 1); // forces provider/operator to remount with fresh seed state
   }
 
-  if (!portal) return <PortalGate onSelect={setPortal} onReset={resetDemo} />;
-  if (portal === "operator") return <OperatorApp key={resetKey} onExit={() => setPortal(null)} />;
-  if (portal === "guest") return <GuestApp onExit={() => setPortal(null)} initialCode={prefillGuestCode} />;
-  return <ProviderApp key={resetKey} onExit={() => setPortal(null)} onGenerateCode={addAccessCode} onJumpToGuest={jumpToGuest} />;
+  const exit = onSubdomain ? undefined : () => setPortal(null);
+
+  if (!portal) {
+    if (wantsPicker()) return <PortalGate onSelect={setPortal} onReset={resetDemo} />;
+    return <Landing onGuest={() => setPortal("guest")} onStaff={() => setPortal("picker")} />;
+  }
+  if (portal === "picker") return <PortalGate onSelect={setPortal} onReset={resetDemo} />;
+  if (portal === "operator") return <OperatorApp key={resetKey} onExit={exit} />;
+  if (portal === "guest") return <GuestApp onExit={exit} initialCode={prefillGuestCode} />;
+  return <ProviderApp key={resetKey} onExit={exit} onGenerateCode={addAccessCode} onJumpToGuest={jumpToGuest} />;
 }
