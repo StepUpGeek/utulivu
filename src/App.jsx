@@ -5128,14 +5128,16 @@ function ReservationRequestsPanel({ rows, onStatus }) {
   );
 }
 
-// Cycles "Welcome" through five languages. Stops on "Welcome" for visitors
-// who have reduced motion turned on.
+// Cycles the greeting through five languages, with the matching language
+// name highlighted in a row beneath it. Each greeting carries its own
+// exclamation mark, as greetings usually do in that language. Visitors with
+// reduced motion turned on see the English greeting, with no cycling.
 const WELCOME_WORDS = [
-  { w: "Welcome", dir: "ltr" },
-  { w: "Karibu", dir: "ltr" },
-  { w: "Bienvenue", dir: "ltr" },
-  { w: "مرحبا", dir: "rtl" },
-  { w: "欢迎", dir: "ltr" },
+  { w: "Welcome!", dir: "ltr", name: "English" },
+  { w: "Karibu!", dir: "ltr", name: "Kiswahili" },
+  { w: "Bienvenue!", dir: "ltr", name: "Français" },
+  { w: "مرحبا!", dir: "rtl", name: "العربية" },
+  { w: "欢迎！", dir: "ltr", name: "中文" },
 ];
 
 function WelcomeWord() {
@@ -5147,7 +5149,28 @@ function WelcomeWord() {
     return () => clearInterval(id);
   }, []);
   const item = WELCOME_WORDS[i];
-  return <span key={i} className="rise" dir={item.dir} style={{ display: "inline-block" }}>{item.w}</span>;
+  return (
+    <div>
+      <div key={i} className="rise fr" dir={item.dir} style={{ display: "inline-block", fontSize: "inherit" }}>{item.w}</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", marginTop: "10px", fontFamily: "'Work Sans', sans-serif", fontSize: "12.5px" }}>
+        {WELCOME_WORDS.map((x, idx) => (
+          <span
+            key={x.name}
+            dir={x.dir}
+            style={{
+              color: idx === i ? C.clay : C.inkSoft,
+              fontWeight: idx === i ? 600 : 400,
+              borderBottom: idx === i ? `2px solid ${C.clay}` : "2px solid transparent",
+              paddingBottom: "2px",
+              transition: "color 300ms ease, border-color 300ms ease",
+            }}
+          >
+            {x.name}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function Landing({ onGuest, lang, setLang }) {
@@ -5177,7 +5200,7 @@ function Landing({ onGuest, lang, setLang }) {
 
       <main style={{ maxWidth: "880px", margin: "0 auto", padding: isMobile ? "40px 18px" : "72px 32px" }}>
         <div style={{ marginBottom: "10px" }}>
-          <div className="fr" style={{ fontSize: isMobile ? "30px" : "40px", fontWeight: 500, color: C.clayDeep, lineHeight: 1.2, minHeight: isMobile ? "38px" : "48px" }}>
+          <div style={{ fontSize: isMobile ? "30px" : "40px", fontWeight: 500, color: C.clayDeep, lineHeight: 1.2, minHeight: isMobile ? "120px" : "130px" }}>
             <WelcomeWord />
           </div>
           <h1 className="rise" key={`h-${lang}`} style={{ fontSize: isMobile ? "24px" : "34px", fontWeight: 500, lineHeight: 1.2, margin: "6px 0 0", animationDelay: "0.1s" }}>{BUSINESS.name}</h1>
