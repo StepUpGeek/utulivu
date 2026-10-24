@@ -55,6 +55,23 @@ const FONTS = (
     .slide-in-rtl { animation-name: slideRight; }
     .cta:hover { transform: translateY(-1px); }
     .cta { transition: transform 150ms ease; }
+    .intro-card {
+      background: ${C.paperRaised}; border: 1px solid ${C.line}; border-radius: 14px; padding: 24px;
+      opacity: 0; transform: translateY(18px);
+      transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1), border-color 0.3s ease;
+    }
+    .intro-card.visible { opacity: 1; transform: none; }
+    @media (hover: hover) {
+      .intro-card.visible:hover { transform: translateY(-3px); border-color: ${C.clay}; }
+    }
+    .intro-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 780px) {
+      .intro-row { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 12px; padding-bottom: 6px; -webkit-overflow-scrolling: touch; }
+      .intro-row > .intro-card { flex: 0 0 82%; scroll-snap-align: start; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .intro-card { opacity: 1 !important; transform: none !important; transition: none !important; }
+    }
     .resv input:focus, .resv textarea:focus, .resv select:focus {
       outline: none !important; border-color: ${C.clay} !important;
       box-shadow: 0 0 0 3px rgba(181,103,58,0.15) !important;
@@ -4874,6 +4891,11 @@ const T = {
   en: {
     welcome: "Welcome to Matondo Guest House",
     intro: "Your comfort comes first at Matondo Guest House. Reserve your room, follow your stay, and reach our team, all from your phone. We're dedicated to a calm, comfortable stay.",
+    cards: [
+      { title: "Your comfort first", text: "Your comfort comes first at Matondo Guest House." },
+      { title: "Reserve and follow", text: "Reserve your room and follow your stay." },
+      { title: "Reach our team", text: "Reach our team, all from your phone." },
+    ],
     reserve: "Make a reservation", access: "Access your stay",
     getInTouch: "Get in touch", address: "Address", openMaps: "Open in Google Maps →",
     whatsapp: "Message on WhatsApp", call: "Call",
@@ -4887,6 +4909,11 @@ const T = {
   sw: {
     welcome: "Karibu Matondo Guest House",
     intro: "Mahali pa utulivu pa kukaa, chenye kila unachohitaji kwenye simu yako.",
+    cards: [
+      { title: "Faraja yako kwanza", text: "Faraja yako ndiyo kipaumbele chetu katika Matondo Guest House." },
+      { title: "Weka nafasi na ufuatilie", text: "Weka nafasi ya chumba chako na ufuatilie ukaaji wako." },
+      { title: "Fikia timu yetu", text: "Wasiliana na timu yetu, kwa simu yako pekee." },
+    ],
     reserve: "Weka nafasi", access: "Ingia kwenye ukaaji wako",
     getInTouch: "Wasiliana nasi", address: "Anwani", openMaps: "Fungua Ramani za Google →",
     whatsapp: "Tuma ujumbe WhatsApp", call: "Piga simu",
@@ -5160,6 +5187,45 @@ function WelcomeWord() {
   );
 }
 
+// Three cards summarising what the guest can do. They fade in as the visitor
+// scrolls to them, lift slightly under a cursor on computers, and become a
+// swipeable row on phones. Reduced motion shows them straight away.
+function IntroCards({ t }) {
+  const refs = useRef([]);
+  const icons = [Sparkles, CalendarDays, MessageCircle];
+  useEffect(() => {
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce || !("IntersectionObserver" in window)) {
+      refs.current.forEach((el) => el && el.classList.add("visible"));
+      return;
+    }
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) { e.target.classList.add("visible"); io.unobserve(e.target); }
+      });
+    }, { threshold: 0.2 });
+    refs.current.forEach((el) => el && io.observe(el));
+    return () => io.disconnect();
+  }, [t]);
+
+  return (
+    <div className="intro-row" style={{ marginBottom: "56px" }}>
+      {t.cards.map((c, i) => {
+        const Icon = icons[i];
+        return (
+          <div key={i} ref={(el) => { refs.current[i] = el; }} className="intro-card">
+            <div style={{ width: "40px", height: "40px", borderRadius: "50%", background: C.signalSoft, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "14px" }}>
+              <Icon size={18} color="#1E6E67" />
+            </div>
+            <div className="fr" style={{ fontSize: "20px", lineHeight: 1.25, marginBottom: "6px" }}>{c.title}</div>
+            <div style={{ fontSize: "14px", color: C.inkSoft, lineHeight: 1.55 }}>{c.text}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Landing({ onGuest, lang, setLang }) {
   const isMobile = useIsMobile();
   const t = T[lang];
@@ -5205,6 +5271,7 @@ function Landing({ onGuest, lang, setLang }) {
           )}
         </div>
 
+        <IntroCards t={t} />
         <section id="reserve" style={{ ...sectionStyle, background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "14px", padding: isMobile ? "22px" : "32px", scrollMarginTop: "80px" }}>
           <h2 className="fr" style={headingStyle}>{t.formTitle}</h2>
           <p style={{ fontSize: "14px", color: C.inkSoft, margin: "-8px 0 22px", lineHeight: 1.55 }}>{t.formIntro}</p>
