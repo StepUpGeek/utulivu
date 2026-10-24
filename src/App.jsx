@@ -38,9 +38,10 @@ const FEATURES = { kitchen: false };
 
 const FONTS = (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&family=Courier+Prime:wght@400;700&display=swap');
     .fr { font-family: 'Fraunces', serif; }
     .ws { font-family: 'Work Sans', sans-serif; }
+    .typewriter { font-family: 'Courier Prime', 'Courier New', monospace; }
     @keyframes ripple {
       0% { box-shadow: 0 0 0 0 rgba(47,158,150,0.45); }
       100% { box-shadow: 0 0 0 22px rgba(47,158,150,0); }
@@ -5237,7 +5238,7 @@ function Landing({ onGuest, lang, setLang }) {
       </main>
 
       <footer style={{ padding: "28px 24px", borderTop: `1px solid ${C.line}`, textAlign: "center", fontSize: "12.5px", color: C.inkSoft, lineHeight: 1.7 }}>
-        <div style={{ fontSize: "11px", letterSpacing: "0.04em" }}>PLATFORM DEVELOPED AND MAINTAINED BY Bits And Bots</div>
+        <div style={{ fontSize: "12px", color: C.inkSoft }}>Powered by <span className="typewriter" style={{ color: C.ink, fontWeight: 700 }}>Bits And Bots</span></div>
       </footer>
     </div>
   );
