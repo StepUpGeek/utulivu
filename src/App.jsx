@@ -5000,16 +5000,6 @@ function ReservationRequestsPanel({ rows, onStatus }) {
 
 function Landing({ onGuest }) {
   const isMobile = useIsMobile();
-  const contactRows = [
-    { icon: MapPin, label: BUSINESS.address, href: BUSINESS.mapsUrl, action: "Open in Google Maps" },
-    { icon: Phone, label: BUSINESS.phone, href: `tel:${BUSINESS.phoneDial}`, action: "Call" },
-    { icon: MessageCircle, label: `WhatsApp ${BUSINESS.phone}`, href: `https://wa.me/${BUSINESS.whatsapp}`, action: "Message us" },
-    ...(BUSINESS.email ? [{ icon: Mail, label: BUSINESS.email, href: `mailto:${BUSINESS.email}`, action: "Email" }] : []),
-  ];
-  const timeRows = [
-    ...(BUSINESS.checkInTime ? [{ icon: Clock, label: `Check-in from ${BUSINESS.checkInTime}` }] : []),
-    ...(BUSINESS.checkOutTime ? [{ icon: Clock, label: `Check-out by ${BUSINESS.checkOutTime}` }] : []),
-  ];
   const sectionStyle = { marginBottom: "56px" };
   const headingStyle = { fontSize: "24px", fontWeight: 500, margin: "0 0 18px" };
 
@@ -5042,34 +5032,38 @@ function Landing({ onGuest }) {
         </section>
 
         <section style={sectionStyle}>
-          <h2 className="fr" style={headingStyle}>Find us</h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-            {contactRows.map((row) => {
-              const Icon = row.icon;
-              return (
-                <div key={row.label} style={{ display: "flex", alignItems: "center", gap: "14px", background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "10px", padding: "14px 16px" }}>
-                  <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: C.signalSoft, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <Icon size={17} color="#1E6E67" />
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0, fontSize: "14.5px" }}>{row.label}</div>
-                  <a href={row.href} target="_blank" rel="noopener noreferrer" style={{ fontSize: "13px", color: C.clayDeep, textDecoration: "none", whiteSpace: "nowrap" }}>{row.action} →</a>
+          <h2 className="fr" style={headingStyle}>Get in touch</h2>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "16px" }}>
+            <div style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "22px", display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", color: C.clayDeep }}>
+                <MapPin size={16} />
+                <span style={{ fontSize: "11.5px", textTransform: "uppercase", letterSpacing: "0.06em", color: C.inkSoft }}>Address</span>
+              </div>
+              <div className="fr" style={{ fontSize: "19px", fontWeight: 500, lineHeight: 1.35 }}>{BUSINESS.address}</div>
+              {(BUSINESS.checkInTime || BUSINESS.checkOutTime) && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px", color: C.inkSoft }}>
+                  {BUSINESS.checkInTime && <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><Clock size={13} /> Check-in from {BUSINESS.checkInTime}</span>}
+                  {BUSINESS.checkOutTime && <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><Clock size={13} /> Check-out by {BUSINESS.checkOutTime}</span>}
                 </div>
-              );
-            })}
-            {timeRows.map((row) => {
-              const Icon = row.icon;
-              return (
-                <div key={row.label} style={{ display: "flex", alignItems: "center", gap: "14px", background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "10px", padding: "14px 16px" }}>
-                  <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: C.paper, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <Icon size={17} color={C.inkSoft} />
-                  </div>
-                  <div style={{ fontSize: "14.5px" }}>{row.label}</div>
-                </div>
-              );
-            })}
+              )}
+              <a href={BUSINESS.mapsUrl} target="_blank" rel="noopener noreferrer" style={{ marginTop: "auto", fontSize: "13.5px", color: C.clayDeep, textDecoration: "none" }}>Open in Google Maps →</a>
+            </div>
+
+            <div style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "22px", display: "flex", flexDirection: "column", gap: "10px", justifyContent: "center" }}>
+              <a href={`https://wa.me/${BUSINESS.whatsapp}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: C.signal, color: "#fff", borderRadius: "8px", padding: "13px 16px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
+                <MessageCircle size={17} /> Message on WhatsApp
+              </a>
+              <a href={`tel:${BUSINESS.phoneDial}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: "none", color: C.ink, border: `1px solid ${C.line}`, borderRadius: "8px", padding: "13px 16px", fontSize: "14.5px", textDecoration: "none" }}>
+                <Phone size={17} /> Call {BUSINESS.phone}
+              </a>
+              {BUSINESS.email && (
+                <a href={`mailto:${BUSINESS.email}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: "none", color: C.inkSoft, borderRadius: "8px", padding: "10px 16px", fontSize: "13.5px", textDecoration: "none" }}>
+                  <Mail size={15} /> {BUSINESS.email}
+                </a>
+              )}
+            </div>
           </div>
         </section>
-
       </main>
 
       <footer style={{ padding: "24px 32px", borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", fontSize: "12.5px", color: C.inkSoft }}>
