@@ -4862,11 +4862,8 @@ const LANDING = {
 const LANG_OPTIONS = [
   { code: "en", label: "English" },
   { code: "sw", label: "Kiswahili" },
-  { code: "fr", label: "Français" },
-  { code: "ar", label: "العربية" },
-  { code: "zh", label: "中文" },
 ];
-const DATE_LOCALE = { en: "en-GB", sw: "sw-TZ", fr: "fr-FR", ar: "ar", zh: "zh-CN" };
+const DATE_LOCALE = { en: "en-GB", sw: "sw-TZ" };
 
 const T = {
   en: {
@@ -4894,45 +4891,6 @@ const T = {
     send: "Tuma ombi la nafasi", sending: "Inatuma…", required: "* lazima. Tunathibitisha kwa simu.",
     night: "usiku", nightsWord: "usiku",
     thanks: (n, p) => `Asante ${n}. Tumepokea ombi lako na tutakupigia simu kwa ${p} kuthibitisha ukaaji wako.`,
-  },
-  fr: {
-    welcome: "Bienvenue à Matondo Guest House",
-    intro: "Un séjour paisible, avec tout ce dont vous avez besoin sur votre téléphone.",
-    reserve: "Réserver", access: "Accéder à votre séjour",
-    getInTouch: "Contactez-nous", address: "Adresse", openMaps: "Ouvrir dans Google Maps →",
-    whatsapp: "Écrire sur WhatsApp", call: "Appeler",
-    formTitle: "Réserver une chambre", formIntro: "Dites-nous quand vous souhaitez venir. Nous vous appellerons pour confirmer.",
-    name: "Votre nom", phone: "Téléphone ou WhatsApp", arriving: "Arrivée", nights: "Nombre de nuits",
-    leaving: "Départ", note: "Autre chose à savoir ? (facultatif)", notePh: "Heure d'arrivée, demandes particulières…",
-    send: "Envoyer la demande", sending: "Envoi…", required: "* obligatoire. Nous confirmons par téléphone.",
-    night: "nuit", nightsWord: "nuits",
-    thanks: (n, p) => `Merci ${n}. Nous avons bien reçu votre demande et vous appellerons au ${p} pour confirmer votre séjour.`,
-  },
-  ar: {
-    welcome: "مرحباً بكم في ماتوندو غست هاوس",
-    intro: "مكان هادئ للإقامة، وكل ما تحتاجه على هاتفك.",
-    reserve: "احجز الآن", access: "الدخول إلى إقامتك",
-    getInTouch: "تواصل معنا", address: "العنوان", openMaps: "فتح في خرائط جوجل ←",
-    whatsapp: "راسلنا عبر واتساب", call: "اتصل بنا",
-    formTitle: "احجز إقامتك", formIntro: "أخبرنا متى ترغب في الحضور، وسنتصل بك للتأكيد.",
-    name: "اسمك", phone: "الهاتف أو واتساب", arriving: "تاريخ الوصول", nights: "عدد الليالي",
-    leaving: "تاريخ المغادرة", note: "هل هناك ما يجب أن نعرفه؟ (اختياري)", notePh: "وقت الوصول، طلبات خاصة…",
-    send: "إرسال طلب الحجز", sending: "جارٍ الإرسال…", required: "* مطلوب. نؤكد الحجز عبر الهاتف.",
-    night: "ليلة", nightsWord: "ليالٍ",
-    thanks: (n, p) => `شكراً ${n}. استلمنا طلبك وسنتصل بك على ${p} لتأكيد إقامتك.`,
-  },
-  zh: {
-    welcome: "欢迎来到 Matondo 民宿",
-    intro: "一个宁静的居所，手机上即可获得您所需的一切。",
-    reserve: "预订", access: "进入您的住宿",
-    getInTouch: "联系我们", address: "地址", openMaps: "在谷歌地图中打开 →",
-    whatsapp: "发送 WhatsApp 消息", call: "致电",
-    formTitle: "预订住宿", formIntro: "请告诉我们您想入住的时间，我们会致电确认。",
-    name: "您的姓名", phone: "电话或 WhatsApp", arriving: "入住日期", nights: "入住晚数",
-    leaving: "退房日期", note: "还有需要了解的事项吗？（可选）", notePh: "到达时间、特殊要求…",
-    send: "提交预订请求", sending: "提交中…", required: "* 必填。我们将通过电话确认。",
-    night: "晚", nightsWord: "晚",
-    thanks: (n, p) => `谢谢${n}。我们已收到您的请求，将致电 ${p} 确认您的住宿。`,
   },
 };
 
@@ -5085,6 +5043,28 @@ function ReservationRequestsPanel({ rows, onStatus }) {
   );
 }
 
+// Cycles "Welcome" through five languages. Stops on "Welcome" for visitors
+// who have reduced motion turned on.
+const WELCOME_WORDS = [
+  { w: "Welcome", dir: "ltr" },
+  { w: "Karibu", dir: "ltr" },
+  { w: "Bienvenue", dir: "ltr" },
+  { w: "مرحبا", dir: "rtl" },
+  { w: "欢迎", dir: "ltr" },
+];
+
+function WelcomeWord() {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) return;
+    const id = setInterval(() => setI((p) => (p + 1) % WELCOME_WORDS.length), 2200);
+    return () => clearInterval(id);
+  }, []);
+  const item = WELCOME_WORDS[i];
+  return <span key={i} className="rise" dir={item.dir} style={{ display: "inline-block" }}>{item.w}</span>;
+}
+
 function Landing({ onGuest }) {
   const isMobile = useIsMobile();
   const [lang, setLang] = useState("en");
@@ -5119,8 +5099,11 @@ function Landing({ onGuest }) {
       </header>
 
       <main style={{ maxWidth: "880px", margin: "0 auto", padding: isMobile ? "40px 18px" : "72px 32px" }}>
-        <div className="rise" key={`h-${lang}`} style={{ animationDelay: "0s" }}>
-          <h1 className="fr" style={{ fontSize: isMobile ? "32px" : "46px", fontWeight: 500, lineHeight: 1.15, margin: "0 0 18px" }}>{t.welcome}</h1>
+        <div style={{ marginBottom: "10px" }}>
+          <div className="fr" style={{ fontSize: isMobile ? "30px" : "40px", fontWeight: 500, color: C.clayDeep, lineHeight: 1.2, minHeight: isMobile ? "38px" : "48px" }}>
+            <WelcomeWord />
+          </div>
+          <h1 className="rise" key={`h-${lang}`} style={{ fontSize: isMobile ? "24px" : "34px", fontWeight: 500, lineHeight: 1.2, margin: "6px 0 0", animationDelay: "0.1s" }}>{BUSINESS.name}</h1>
         </div>
         <div className="rise" key={`i-${lang}`} style={{ animationDelay: "0.15s" }}>
           <p style={{ fontSize: isMobile ? "15px" : "17px", color: C.inkSoft, lineHeight: 1.6, maxWidth: "640px", margin: "0 0 32px" }}>{t.intro}</p>
