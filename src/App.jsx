@@ -821,7 +821,7 @@ function Login({ onSignIn, onBack }) {
           </button>
         )}
         <p className="ws" style={{ marginTop: "16px", fontSize: "12px", color: C.inkSoft }}>
-          Demo data only — nothing here is saved beyond this session.
+          Sign in with the email your owner gave you.
         </p>
       </div>
     </div>
@@ -4421,7 +4421,7 @@ function GuestApp({ onExit, initialCode }) {
           />
           {error && <p style={{ color: C.red, fontSize: "12.5px", margin: "0 0 12px" }}>{error}</p>}
           <button onClick={enter} disabled={loading} style={{ width: "100%", padding: "11px", borderRadius: "8px", border: "none", background: C.ink, color: "#fff", fontSize: "14.5px", fontWeight: 500, cursor: loading ? "default" : "pointer", opacity: loading ? 0.7 : 1 }}>
-            {loading ? "Checking…" : "Access my stay"}
+            {loading ? "Checking…" : "Access your stay"}
           </button>
           <p style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "12px" }}>
             Lost your code? The front desk can send you a new one.
@@ -4843,7 +4843,7 @@ const BUSINESS = {
 const LANDING = {
   name: BUSINESS.name,
   pitch: "Welcome to Matondo Guest House.",
-  intro: "A calm place to stay. Book your room, check your booking, see your bill, and send a request to the front desk, all from your phone.",
+  intro: "A calm place to stay, with everything you need on your phone.",
   roomTypes: ["Single", "Double", "Deluxe", "Presidential"],
 };
 
@@ -4998,7 +4998,7 @@ function ReservationRequestsPanel({ rows, onStatus }) {
   );
 }
 
-function Landing({ onGuest, onStaff }) {
+function Landing({ onGuest }) {
   const isMobile = useIsMobile();
   const contactRows = [
     { icon: MapPin, label: BUSINESS.address, href: BUSINESS.mapsUrl, action: "Open in Google Maps" },
@@ -5075,7 +5075,6 @@ function Landing({ onGuest, onStaff }) {
       <footer style={{ padding: "24px 32px", borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", fontSize: "12.5px", color: C.inkSoft }}>
         <span>© {new Date().getFullYear()} {LANDING.name}</span>
         <span>{BUSINESS.phone}</span>
-        <button onClick={onStaff} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "12.5px", cursor: "pointer", padding: 0 }}>Staff sign-in</button>
       </footer>
     </div>
   );
@@ -5212,7 +5211,7 @@ export default function App() {
 
   if (!portal) {
     if (wantsPicker()) return <PortalGate onSelect={setPortal} onReset={resetDemo} />;
-    return <Landing onGuest={() => setPortal("guest")} onStaff={() => setPortal("picker")} />;
+    return <Landing onGuest={() => setPortal("guest")} />;
   }
   if (portal === "picker") return <PortalGate onSelect={setPortal} onReset={resetDemo} />;
   if (portal === "operator") return <OperatorApp key={resetKey} onExit={exit} />;
