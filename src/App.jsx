@@ -1281,7 +1281,8 @@ function ServiceModal({ service, branchId, onClose, onSave, onDelete }) {
   );
 }
 
-function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
+function ProviderApp({ onExit, onGenerateCode, onJumpToGuest, lang, setLang }) {
+  const p = tr(P, lang);
   const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
   const [role, setRole] = useState(null); // 'owner' | 'manager' | 'staff' | null while loading
   const [branches, setBranches] = useState([]);
@@ -2154,15 +2155,15 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
     : requests.filter((r) => new Date(r.created_at) >= todayStart);
 
   const NAV = [
-    { id: "dashboard", label: "Dashboard", icon: LayoutGrid },
-    { id: "requests", label: "Requests", icon: Bell, badge: newRequestCount || null },
-    { id: "bookings", label: "Bookings", icon: CalendarDays },
-    { id: "clients", label: "Clients", icon: Users },
-    { id: "inquiries", label: "Inquiries", icon: MessageSquareText },
-    { id: "services", label: "Services", icon: Wrench },
-    { id: "tags", label: "NFC tags", icon: Radio },
-    { id: "finance", label: "Finance", icon: Wallet },
-    ...(role === "owner" ? [{ id: "team", label: "Team", icon: Shield }] : []),
+    { id: "dashboard", label: p("dashboard"), icon: LayoutGrid },
+    { id: "requests", label: p("requests"), icon: Bell, badge: newRequestCount || null },
+    { id: "bookings", label: p("bookings"), icon: CalendarDays },
+    { id: "clients", label: p("clients"), icon: Users },
+    { id: "inquiries", label: p("inquiries"), icon: MessageSquareText },
+    { id: "services", label: p("services"), icon: Wrench },
+    { id: "tags", label: p("tags"), icon: Radio },
+    { id: "finance", label: p("finance"), icon: Wallet },
+    ...(role === "owner" ? [{ id: "team", label: p("team"), icon: Shield }] : []),
   ];
 
   return (
@@ -2230,10 +2231,11 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
               </button>
             )}
             <h2 className="fr" style={{ margin: 0, fontSize: isMobile ? "18px" : "21px", fontWeight: 500, textTransform: "capitalize" }}>
-              {tab === "tags" ? "NFC tags" : tab}
+              {p(tab)}
             </h2>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <LanguageSelect lang={lang} setLang={setLang} label={p("language")} />
             <ConnectionBadge isOnline={isOnline} usingCache={usingCache} syncing={syncing} pendingCount={pendingCount} />
           {syncFailures.length > 0 && (
             <div style={{ position: "relative" }}>
@@ -2316,11 +2318,11 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
 
               <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(4, 1fr)", gap: isMobile ? "10px" : "16px" }}>
                 {[
-                  ["Active bookings today", activeBookingsToday.length],
-                  ["Rooms available", roomsAvailableToday],
+                  [p("activeToday"), activeBookingsToday.length],
+                  [p("roomsAvailable"), roomsAvailableToday],
                   ...(canManage ? [
-                    ["Revenue today", money(revenueToday)],
-                    ["Outstanding today", money(outstandingToday)],
+                    [p("revenueToday"), money(revenueToday)],
+                    [p("outstandingToday"), money(outstandingToday)],
                   ] : []),
                 ].map(([label, val]) => (
                   <div key={label} style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "10px", padding: "18px" }}>
@@ -2403,11 +2405,11 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest }) {
                   <tr style={{ textAlign: "left", color: C.inkSoft, fontSize: "12.5px" }}>
                     <th style={{ paddingBottom: "10px" }}>Room</th>
                     <th>Client</th>
-                    <th>Services</th>
-                    <th>Duration</th>
-                    <th>Status</th>
-                    <th>Payment</th>
-                    <th>Guest access</th>
+                    <th>{p("servicesCol")}</th>
+                    <th>{p("duration")}</th>
+                    <th>{p("status")}</th>
+                    <th>{p("payment")}</th>
+                    <th>{p("guestAccess")}</th>
                     {canManage && <th></th>}
                   </tr>
                 </thead>
@@ -4012,7 +4014,7 @@ function GuestRequestStatus({ requests, isExpired, confirmingId, onConfirm, empt
                     onClick={() => onConfirm(r)}
                     style={{ fontSize: "12px", border: "none", background: isExpired ? C.line : C.signal, color: isExpired ? C.inkSoft : "#fff", borderRadius: "6px", padding: "5px 11px", cursor: isExpired ? "default" : "pointer", marginLeft: "auto" }}
                   >
-                    {confirmingId === r.id ? "Confirming…" : "Confirm received"}
+                    {confirmingId === r.id ? g("sending") : g("confirmReceived")}
                   </button>
                 )}
               </div>
@@ -4025,7 +4027,7 @@ function GuestRequestStatus({ requests, isExpired, confirmingId, onConfirm, empt
                     onClick={() => onConfirm(r)}
                     style={{ fontSize: "12px", border: "none", background: isExpired ? C.line : C.signal, color: isExpired ? C.inkSoft : "#fff", borderRadius: "6px", padding: "5px 11px", cursor: isExpired ? "default" : "pointer" }}
                   >
-                    {confirmingId === r.id ? "Confirming…" : "Mark as received"}
+                    {confirmingId === r.id ? g("sending") : g("markReceived")}
                   </button>
                 )}
               </div>
@@ -4067,9 +4069,9 @@ function KitchenOrderGrid({ items, quantities, setQuantities, cookingNotes, setC
               </div>
 
               {!available ? (
-                <span style={{ fontSize: "11.5px", color: C.red, fontWeight: 500 }}>Currently unavailable</span>
+                <span style={{ fontSize: "11.5px", color: C.red, fontWeight: 500 }}>{g("unavailable")}</span>
               ) : requested ? (
-                <span style={{ fontSize: "12px", color: "#1E6E67", fontWeight: 500 }}>Requested</span>
+                <span style={{ fontSize: "12px", color: "#1E6E67", fontWeight: 500 }}>{g("requested")}</span>
               ) : (
                 <>
                   <div style={{ display: "flex", gap: "6px", marginBottom: "6px" }}>
@@ -4098,7 +4100,7 @@ function KitchenOrderGrid({ items, quantities, setQuantities, cookingNotes, setC
                       cursor: disabled ? "default" : "pointer", opacity: sendingId === item.id ? 0.7 : 1
                     }}
                   >
-                    {sendingId === item.id ? "Sending…" : "Request"}
+                    {sendingId === item.id ? g("sending") : g("request")}
                   </button>
                 </>
               )}
@@ -4174,7 +4176,7 @@ const GUEST_TABS = [
 // The bottom navigation bar itself — full-width chrome (unlike the content
 // above it and the message composer below, which both stay content-width),
 // matching how a bottom tab bar normally reads in a phone app.
-function GuestTabBar({ active, onChange, requestBadge }) {
+function GuestTabBar({ active, onChange, requestBadge, labels }) {
   return (
     <div className="no-print" style={{
       position: "fixed", left: 0, right: 0, bottom: 0, background: C.paperRaised,
@@ -4206,7 +4208,7 @@ function GuestTabBar({ active, onChange, requestBadge }) {
                 </span>
               )}
             </span>
-            <span style={{ fontSize: "11px", fontWeight: isActive ? 600 : 500 }}>{t.label}</span>
+            <span style={{ fontSize: "11px", fontWeight: isActive ? 600 : 500 }}>{(labels && labels[t.id]) || t.label}</span>
             {isActive && <span style={{ position: "absolute", bottom: 0, left: "20%", right: "20%", height: "2px", background: C.clay, borderRadius: "2px" }} />}
           </button>
         );
@@ -4215,7 +4217,8 @@ function GuestTabBar({ active, onChange, requestBadge }) {
   );
 }
 
-function GuestApp({ onExit, initialCode }) {
+function GuestApp({ onExit, initialCode, lang, setLang }) {
+  const g = tr(G, lang);
   const savedCode = (() => {
     try { return localStorage.getItem(GUEST_CODE_KEY); } catch (e) { return null; }
   })();
@@ -4395,7 +4398,7 @@ function GuestApp({ onExit, initialCode }) {
     setLoading(false);
     if (qErr || !data) {
       try { localStorage.removeItem(GUEST_CODE_KEY); } catch (e) {}
-      if (!opts.silent) setError("That access code wasn't recognized. Check the code from your booking confirmation.");
+      if (!opts.silent) setError(g("wrongCode"));
       return;
     }
     try { localStorage.setItem(GUEST_CODE_KEY, data.code); } catch (e) {}
@@ -4417,11 +4420,14 @@ function GuestApp({ onExit, initialCode }) {
     return (
       <div style={{ minHeight: "560px", display: "flex", alignItems: "center", justifyContent: "center", background: C.paper }}>
         {FONTS}
+        <div style={{ position: "fixed", top: "12px", right: "12px", zIndex: 6 }}>
+          <LanguageSelect lang={lang} setLang={setLang} label={g("language")} />
+        </div>
         <div className="ws" style={{ width: "min(340px, 92vw)", background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "14px", padding: "32px" }}>
           <div style={{ width: "40px", height: "40px", borderRadius: "9px", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "20px" }}>
             <Radio size={19} color={C.signal} />
           </div>
-          <h1 className="fr" style={{ margin: "0 0 6px", fontSize: "23px", fontWeight: 500 }}>Welcome to Matondo Guest House</h1>
+          <h1 className="fr" style={{ margin: "0 0 6px", fontSize: "23px", fontWeight: 500 }}>{g("enterTitle")}</h1>
           <p style={{ margin: "0 0 22px", fontSize: "13.5px", color: C.inkSoft, lineHeight: 1.55 }}>
             Your room, your requests and your bill, all in one place. Enter the access code from your booking confirmation to open your stay.
           </p>
@@ -4433,10 +4439,10 @@ function GuestApp({ onExit, initialCode }) {
           />
           {error && <p style={{ color: C.red, fontSize: "12.5px", margin: "0 0 12px" }}>{error}</p>}
           <button onClick={enter} disabled={loading} style={{ width: "100%", padding: "11px", borderRadius: "8px", border: "none", background: C.ink, color: "#fff", fontSize: "14.5px", fontWeight: 500, cursor: loading ? "default" : "pointer", opacity: loading ? 0.7 : 1 }}>
-            {loading ? "Checking…" : "Access your stay"}
+            {loading ? g("checking") : g("accessYourStay")}
           </button>
           <p style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "12px" }}>
-            Lost your code? The front desk can send you a new one.
+            {g("lostCode")}
           </p>
           {onExit && (
             <button onClick={onExit} style={{ width: "100%", marginTop: "10px", padding: "9px", borderRadius: "8px", border: `1px solid ${C.line}`, background: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
@@ -4474,14 +4480,17 @@ function GuestApp({ onExit, initialCode }) {
   return (
     <div className="ws" style={{ minHeight: "560px", background: C.paper, display: "flex", justifyContent: "center", padding: "36px 20px 170px" }}>
       {FONTS}
+      <div style={{ position: "fixed", top: "12px", right: "12px", zIndex: 6 }}>
+        <LanguageSelect lang={lang} setLang={setLang} label={g("language")} />
+      </div>
       <div style={{ width: "min(420px, 100%)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
-          <h1 className="fr" style={{ margin: 0, fontSize: "22px", fontWeight: 500 }}>{hasStayedBefore ? "Welcome back" : "Welcome"}, {guestFirstName}</h1>
+          <h1 className="fr" style={{ margin: 0, fontSize: "22px", fontWeight: 500 }}>{hasStayedBefore ? g("welcomeBack") : g("welcome")}, {guestFirstName}</h1>
           <span style={{
             fontSize: "12.5px", fontWeight: 500, padding: "3px 10px", borderRadius: "999px",
             background: isExpired ? "#F3DEDE" : C.signalSoft, color: isExpired ? C.red : "#1E6E67"
           }}>
-            {isExpired ? "Access expired" : "Access active"}
+            {isExpired ? g("accessExpired") : g("accessActive")}
           </span>
         </div>
 
@@ -4497,11 +4506,11 @@ function GuestApp({ onExit, initialCode }) {
             just wasted vertical space. */}
         {guestTab === "stay" && (
         <>
-        <Panel title="Booking">
+        <Panel title={g("booking")}>
           <div id="stay-summary-print" style={{ fontSize: "14px", lineHeight: 1.8 }}>
             {access.room_number && (
               <div style={{ marginBottom: "8px" }}>
-                <span style={{ fontSize: "12px", color: C.inkSoft }}>Your room</span>
+                <span style={{ fontSize: "12px", color: C.inkSoft }}>{g("yourRoom")}</span>
                 <div className="fr" style={{ fontSize: "22px", fontWeight: 500, color: C.ink }}>
                   Room {access.room_number}{access.room_type ? ` · ${access.room_type}` : ""}
                 </div>
@@ -4519,12 +4528,12 @@ function GuestApp({ onExit, initialCode }) {
                 a printed summary is a real bill, not just the dates. */}
             <div style={{ borderTop: `1px solid ${C.line}`, marginTop: "14px", paddingTop: "14px" }}>
               {access.invoice_amount == null && chargeableRequests.length === 0 ? (
-                <span style={{ fontSize: "13.5px", color: C.inkSoft }}>No charges on file yet.</span>
+                <span style={{ fontSize: "13.5px", color: C.inkSoft }}>{g("noCharges")}</span>
               ) : (
                 <>
                   {access.invoice_amount != null && (
                     <>
-                      <div style={{ fontSize: "12px", color: C.inkSoft, marginBottom: "6px" }}>Accommodation</div>
+                      <div style={{ fontSize: "12px", color: C.inkSoft, marginBottom: "6px" }}>{g("accommodation")}</div>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
                         <span style={{ fontSize: "13.5px" }}>
                           Room {access.room_number || "—"}{access.room_type ? ` · ${access.room_type}` : ""}
@@ -4536,7 +4545,7 @@ function GuestApp({ onExit, initialCode }) {
 
                   {chargeableRequests.length > 0 && (
                     <div style={{ marginTop: access.invoice_amount != null ? "14px" : 0 }}>
-                      <div style={{ fontSize: "12px", color: C.inkSoft, marginBottom: "6px" }}>Orders &amp; services</div>
+                      <div style={{ fontSize: "12px", color: C.inkSoft, marginBottom: "6px" }}>{g("ordersServices")}</div>
                       {chargeableRequests.map((r) => (
                         <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "10px", marginBottom: "4px" }}>
                           <span style={{ fontSize: "13.5px" }}>{requestLabel(r)}</span>
@@ -4544,25 +4553,25 @@ function GuestApp({ onExit, initialCode }) {
                         </div>
                       ))}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "6px", paddingTop: "6px", borderTop: `1px dashed ${C.line}` }}>
-                        <span style={{ fontSize: "12.5px", color: C.inkSoft }}>Orders subtotal</span>
+                        <span style={{ fontSize: "12.5px", color: C.inkSoft }}>{g("ordersSubtotal")}</span>
                         <span style={{ fontSize: "13.5px" }}>{money(ordersTotal)}</span>
                       </div>
                     </div>
                   )}
 
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "12px", paddingTop: "10px", borderTop: `2px solid ${C.ink}` }}>
-                    <span style={{ fontSize: "13px", fontWeight: 500 }}>Grand total</span>
+                    <span style={{ fontSize: "13px", fontWeight: 500 }}>{g("grandTotal")}</span>
                     <span className="fr" style={{ fontSize: "19px", fontWeight: 500 }}>{money(grandTotal)}</span>
                   </div>
                   {paidSoFar > 0 && (
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px" }}>
-                      <span style={{ fontSize: "12.5px", color: C.inkSoft }}>Paid so far</span>
+                      <span style={{ fontSize: "12.5px", color: C.inkSoft }}>{g("paidSoFar")}</span>
                       <span style={{ fontSize: "13.5px" }}>{money(paidSoFar)}</span>
                     </div>
                   )}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "6px" }}>
                     <span style={{ fontSize: "12.5px", fontWeight: 500, color: remainingBalance > 0 ? C.red : "#1E6E67" }}>
-                      {remainingBalance > 0 ? "Remaining balance" : "Fully paid"}
+                      {remainingBalance > 0 ? g("remainingBalance") : g("fullyPaid")}
                     </span>
                     {remainingBalance > 0 && (
                       <span style={{ fontSize: "14px", fontWeight: 500, color: C.red }}>{money(remainingBalance)}</span>
@@ -4579,7 +4588,7 @@ function GuestApp({ onExit, initialCode }) {
               className="no-print"
               style={{ width: "100%", marginTop: "12px", padding: "9px", borderRadius: "7px", border: `1px solid ${C.line}`, background: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}
             >
-              Print summary
+              {g("printSummary")}
             </button>
           )}
         </Panel>
@@ -4593,7 +4602,7 @@ function GuestApp({ onExit, initialCode }) {
 
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: "18px" }}>
           <button onClick={switchGuest} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
-            Not you? Switch guest
+            {g("notYou")}
           </button>
           {onExit && (
             <button onClick={onExit} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: "13px", cursor: "pointer" }}>
@@ -4634,7 +4643,7 @@ function GuestApp({ onExit, initialCode }) {
                 isExpired={isExpired}
                 confirmingId={confirmingId}
                 onConfirm={confirmRequest}
-                emptyText="Nothing ordered from the kitchen yet this stay."
+                emptyText={g("nothingRequested")}
               />
             </Panel>
           </>
@@ -4647,7 +4656,7 @@ function GuestApp({ onExit, initialCode }) {
           <>
             {guestServices.some((s) => s.category !== "Kitchen" || FEATURES.kitchen) && (
               <>
-                <Panel title="Order more">
+                <Panel title={g("orderMore")}>
                   <div style={{ display: "flex", gap: "6px", marginBottom: "14px", flexWrap: "wrap" }}>
                     {CATEGORY_ORDER.filter((cat) => (cat !== "Kitchen" || FEATURES.kitchen) && guestServices.some((s) => s.category === cat)).map((cat) => (
                       <button
@@ -4665,8 +4674,8 @@ function GuestApp({ onExit, initialCode }) {
                     ))}
                   </div>
                   <p style={{ fontSize: "13px", color: C.inkSoft, marginTop: 0, marginBottom: "14px" }}>
-                    {(activeCategory === "Counter" || activeCategory === "Amenities") && "Tap to request any item — staff will bring it to your room."}
-                    {activeCategory === "Laundry" && "Pick a quantity per item — ironing is complimentary."}
+                    {(activeCategory === "Counter" || activeCategory === "Amenities") && "{g("tapToRequest")}"}
+                    {activeCategory === "Laundry" && "{g("laundryNote")}"}
                   </p>
                   <OtherServicesList
                     items={guestServices.filter((item) => item.category === activeCategory)}
@@ -4681,13 +4690,13 @@ function GuestApp({ onExit, initialCode }) {
                 <div style={{ height: "14px" }} />
               </>
             )}
-            <Panel title="Your requests">
+            <Panel title={g("yourRequests")}>
               <GuestRequestStatus
                 requests={myRequests}
                 isExpired={isExpired}
                 confirmingId={confirmingId}
                 onConfirm={confirmRequest}
-                emptyText="Nothing requested yet this stay."
+                emptyText={g("nothingRequested")}
               />
             </Panel>
           </>
@@ -4696,9 +4705,9 @@ function GuestApp({ onExit, initialCode }) {
         {/* Front desk tab — airtime top-up. Messaging lives in the floating
             composer now, always reachable regardless of which tab is open. */}
         {guestTab === "frontdesk" && (
-        <Panel title="Front desk">
+        <Panel title={g("frontDesk")}>
           <div>
-            <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px", color: C.ink }}>Airtime top-up</p>
+            <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px", color: C.ink }}>{g("airtime")}</p>
             {airtimeSent ? (
               <p style={{ fontSize: "13.5px", color: "#1E6E67", margin: 0 }}>Request sent — {airtimeNetwork}, TSh {Number(airtimeAmount).toLocaleString()} to {airtimePhone}. Front desk notified.</p>
             ) : (
@@ -4784,7 +4793,7 @@ function GuestApp({ onExit, initialCode }) {
             value={customMessage}
             onChange={(e) => setCustomMessage(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !isExpired && !customSending && customMessage.trim()) sendCustomMessage(); }}
-            placeholder={isExpired ? "Messaging is closed for this stay" : "Message the front desk…"}
+            placeholder={isExpired ? g("messagingClosed") : g("messagePh")}
             disabled={isExpired || customSending}
             className="ws"
             style={{ flex: 1, minWidth: 0, border: "none", outline: "none", fontSize: "13.5px", background: "none", color: C.ink }}
@@ -4809,12 +4818,13 @@ function GuestApp({ onExit, initialCode }) {
       {customSent && (
         <div className="no-print" style={{ position: "fixed", left: 0, right: 0, bottom: "126px", display: "flex", justifyContent: "center", pointerEvents: "none" }}>
           <span style={{ fontSize: "12px", color: "#1E6E67", background: C.signalSoft, padding: "4px 12px", borderRadius: "999px" }}>
-            Sent — the front desk has been notified.
+            {g("sentNote")}
           </span>
         </div>
       )}
 
       <GuestTabBar
+        labels={{ stay: g("tabStay"), kitchen: g("tabKitchen"), requests: g("tabRequests"), frontdesk: g("tabFrontDesk") }}
         active={guestTab}
         onChange={setGuestTab}
         requestBadge={myRequests.filter((r) => !isRequestSettled(r)).length}
@@ -4893,6 +4903,90 @@ const T = {
     thanks: (n, p) => `Asante ${n}. Tumepokea ombi lako na tutakupigia simu kwa ${p} kuthibitisha ukaaji wako.`,
   },
 };
+
+
+/* ---------------------------------------------------------
+   Translations for the guest portal and the provider's daily
+   screens. English is the default; Kiswahili is the second option.
+   The language choice is shared across the landing page and the
+   guest portal, and remembered on each device.
+--------------------------------------------------------- */
+const G = {
+  en: {
+    tabStay: "Stay", tabKitchen: "Kitchen", tabRequests: "Requests", tabFrontDesk: "Front desk",
+    welcome: "Welcome", welcomeBack: "Welcome back", enterTitle: "Welcome to Matondo Guest House",
+    accessActive: "Access active", accessExpired: "Access expired", booking: "Booking", yourRoom: "Your room",
+    accommodation: "Accommodation", ordersServices: "Orders & services", ordersSubtotal: "Orders subtotal",
+    grandTotal: "Grand total", paidSoFar: "Paid so far", remainingBalance: "Remaining balance", fullyPaid: "Fully paid",
+    noCharges: "No charges on file yet.", printSummary: "Print summary", yourRequests: "Your requests",
+    nothingRequested: "Nothing requested yet this stay.", orderMore: "Order more",
+    tapToRequest: "Tap to request any item — staff will bring it to your room.",
+    laundryNote: "Pick a quantity per item — ironing is complimentary.", request: "Request", sending: "Sending…",
+    requested: "Requested", unavailable: "Currently unavailable", markReceived: "Mark as received",
+    confirmReceived: "Confirm received", frontDesk: "Front desk", airtime: "Airtime top-up",
+    messagePh: "Message the front desk…", messagingClosed: "Messaging is closed for this stay", send: "Send",
+    sentNote: "Sent — the front desk has been notified.", notYou: "Not you? Switch guest",
+    lostCode: "Lost your code? The front desk can send you a new one.", accessYourStay: "Access your stay",
+    checking: "Checking…", wrongCode: "That access code wasn't recognized. Check the code from your booking confirmation.",
+    stayAt: "Your stay", language: "Language",
+  },
+  sw: {
+    tabStay: "Ukaaji", tabKitchen: "Jikoni", tabRequests: "Maombi", tabFrontDesk: "Mapokezi",
+    welcome: "Karibu", welcomeBack: "Karibu tena", enterTitle: "Karibu Matondo Guest House",
+    accessActive: "Ufikiaji unafanya kazi", accessExpired: "Ufikiaji umeisha", booking: "Nafasi yako", yourRoom: "Chumba chako",
+    accommodation: "Malazi", ordersServices: "Oda na huduma", ordersSubtotal: "Jumla ya oda",
+    grandTotal: "Jumla kuu", paidSoFar: "Umelipa hadi sasa", remainingBalance: "Salio linalobaki", fullyPaid: "Umelipa yote",
+    noCharges: "Hakuna malipo bado.", printSummary: "Chapisha muhtasari", yourRequests: "Maombi yako",
+    nothingRequested: "Hakuna ombi bado kwa ukaaji huu.", orderMore: "Agiza zaidi",
+    tapToRequest: "Gusa ili kuomba kitu chochote — wafanyakazi watakileta chumbani kwako.",
+    laundryNote: "Chagua idadi kwa kila kitu — kupiga pasi ni bure.", request: "Omba", sending: "Inatuma…",
+    requested: "Imeombwa", unavailable: "Haipatikani kwa sasa", markReceived: "Thibitisha umepokea",
+    confirmReceived: "Thibitisha umepokea", frontDesk: "Mapokezi", airtime: "Kujaza muda wa maongezi",
+    messagePh: "Tuma ujumbe kwa mapokezi…", messagingClosed: "Ujumbe umefungwa kwa ukaaji huu", send: "Tuma",
+    sentNote: "Imetumwa — mapokezi wamearifiwa.", notYou: "Si wewe? Badilisha mgeni",
+    lostCode: "Umepoteza msimbo? Mapokezi wanaweza kukutumia mpya.", accessYourStay: "Ingia kwenye ukaaji wako",
+    checking: "Inakagua…", wrongCode: "Msimbo huo haukutambuliwa. Angalia msimbo kwenye uthibitisho wa nafasi yako.",
+    stayAt: "Ukaaji wako", language: "Lugha",
+  },
+};
+
+const P = {
+  en: {
+    dashboard: "Dashboard", requests: "Requests", bookings: "Bookings", clients: "Clients", inquiries: "Inquiries",
+    services: "Services", tags: "NFC tags", finance: "Finance", team: "Team",
+    client: "Client", room: "Room", servicesCol: "Services", duration: "Duration", status: "Status",
+    payment: "Payment", guestAccess: "Guest access", activeToday: "Active bookings today",
+    roomsAvailable: "Rooms available", revenueToday: "Revenue today", outstandingToday: "Outstanding today",
+    today: "Today", language: "Language",
+  },
+  sw: {
+    dashboard: "Dashibodi", requests: "Maombi", bookings: "Nafasi", clients: "Wateja", inquiries: "Maswali",
+    services: "Huduma", tags: "Kadi za NFC", finance: "Fedha", team: "Timu",
+    client: "Mteja", room: "Chumba", servicesCol: "Huduma", duration: "Muda", status: "Hali",
+    payment: "Malipo", guestAccess: "Ufikiaji wa mgeni", activeToday: "Nafasi zilizo hai leo",
+    roomsAvailable: "Vyumba vilivyo wazi", revenueToday: "Mapato ya leo", outstandingToday: "Deni la leo",
+    today: "Leo", language: "Lugha",
+  },
+};
+
+// Returns a function that looks up a key in the chosen language, falling back to English.
+function tr(dict, lang) {
+  return (key) => (dict[lang] && dict[lang][key]) || dict.en[key] || key;
+}
+
+// Shared language switch used on the landing page, guest portal and provider portal.
+function LanguageSelect({ lang, setLang, label, style }) {
+  return (
+    <select
+      value={lang}
+      onChange={(e) => setLang(e.target.value)}
+      aria-label={label}
+      style={{ fontSize: "12.5px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "6px 8px", color: C.ink, ...style }}
+    >
+      {LANG_OPTIONS.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
+    </select>
+  );
+}
 
 const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${C.line}`, fontSize: "14px", boxSizing: "border-box", background: "#fff", fontFamily: "inherit" };
 const labelStyle = { fontSize: "12.5px", color: C.inkSoft, display: "block", marginBottom: "6px" };
@@ -5065,9 +5159,8 @@ function WelcomeWord() {
   return <span key={i} className="rise" dir={item.dir} style={{ display: "inline-block" }}>{item.w}</span>;
 }
 
-function Landing({ onGuest }) {
+function Landing({ onGuest, lang, setLang }) {
   const isMobile = useIsMobile();
-  const [lang, setLang] = useState("en");
   const t = T[lang];
   const rtl = lang === "ar";
   const sectionStyle = { marginBottom: "56px" };
@@ -5082,14 +5175,7 @@ function Landing({ onGuest }) {
           <span className="fr" style={{ fontSize: isMobile ? "15px" : "18px", fontWeight: 500 }}>{LANDING.name}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <select
-            value={lang}
-            onChange={(e) => setLang(e.target.value)}
-            aria-label="Language"
-            style={{ fontSize: "13px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "7px 8px", color: C.ink }}
-          >
-            {LANG_OPTIONS.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
-          </select>
+          <LanguageSelect lang={lang} setLang={setLang} label="Language" />
           {!isMobile && (
             <button onClick={onGuest} style={{ fontSize: "13.5px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "8px 14px", cursor: "pointer", color: C.ink }}>
               {t.access}
@@ -5262,6 +5348,12 @@ function wantsPicker() {
 }
 
 export default function App() {
+  const [lang, setLang] = useState(() => {
+    try { return localStorage.getItem("utulivu_lang") || "en"; } catch (e) { return "en"; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("utulivu_lang", lang); } catch (e) { /* storage unavailable: keep current session only */ }
+  }, [lang]);
   const hostPortal = portalFromHost();
   const [portal, setPortal] = useState(() => {
     if (hostPortal) return hostPortal;
@@ -5299,10 +5391,10 @@ export default function App() {
 
   if (!portal) {
     if (wantsPicker()) return <PortalGate onSelect={setPortal} onReset={resetDemo} />;
-    return <Landing onGuest={() => setPortal("guest")} />;
+    return <Landing onGuest={() => setPortal("guest")} lang={lang} setLang={setLang} />;
   }
   if (portal === "picker") return <PortalGate onSelect={setPortal} onReset={resetDemo} />;
   if (portal === "operator") return <OperatorApp key={resetKey} onExit={exit} />;
-  if (portal === "guest") return <GuestApp onExit={exit} initialCode={prefillGuestCode} />;
-  return <ProviderApp key={resetKey} onExit={exit} onGenerateCode={addAccessCode} onJumpToGuest={jumpToGuest} />;
+  if (portal === "guest") return <GuestApp onExit={exit} initialCode={prefillGuestCode} lang={lang} setLang={setLang} />;
+  return <ProviderApp key={resetKey} onExit={exit} onGenerateCode={addAccessCode} onJumpToGuest={jumpToGuest} lang={lang} setLang={setLang} />;
 }
