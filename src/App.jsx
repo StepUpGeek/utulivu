@@ -4831,8 +4831,7 @@ function GuestApp({ onExit, initialCode }) {
 const BUSINESS = {
   name: "MATONDO GUEST HOUSE",
   address: "Kakola, Msalala, Shinyanga, Tanzania",
-  // Replace with the exact "Share" link from Google Maps for the pin.
-  mapsUrl: "https://www.google.com/maps/search/?api=1&query=Matondo+Guest+House+Kakola+Msalala+Shinyanga",
+  mapsUrl: "https://maps.app.goo.gl/6oaT98HdXyJd3vDX9",
   phone: "+255 714 566 925",
   phoneDial: "+255714566925",
   whatsapp: "255714566925",
@@ -4845,13 +4844,7 @@ const LANDING = {
   name: BUSINESS.name,
   pitch: "Welcome to Matondo Guest House.",
   intro: "A calm place to stay. Book your room, check your booking, see your bill, and send a request to the front desk, all from your phone.",
-  features: [
-    { title: "Your stay, in one place", text: "Open your stay with your access code or QR. See your room, your dates and your booking at a glance." },
-    { title: "Requests that get done", text: "Ask the front desk for anything you need, then follow it until it's taken care of." },
-    { title: "Clear billing", text: "See what you owe, what you've paid and your remaining balance, at any time during your stay." },
-  ],
   roomTypes: ["Single", "Double", "Deluxe", "Presidential"],
-  audience: "A quiet place to rest and recharge.",
 };
 
 const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${C.line}`, fontSize: "14px", boxSizing: "border-box", background: "#fff", fontFamily: "inherit" };
@@ -5028,33 +5021,18 @@ function Landing({ onGuest, onStaff }) {
           <img src="/matondo-logo.svg" alt="" width="28" height="28" style={{ borderRadius: "8px" }} />
           <span className="fr" style={{ fontSize: isMobile ? "15px" : "18px", fontWeight: 500 }}>{LANDING.name}</span>
         </div>
-        <div style={{ display: "flex", gap: "8px" }}>
-          <a href="#reserve" style={{ fontSize: "13.5px", background: C.clay, color: "#fff", borderRadius: "8px", padding: "8px 14px", textDecoration: "none" }}>Reserve</a>
-          <button onClick={onGuest} style={{ fontSize: "13.5px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "8px 14px", cursor: "pointer", color: C.ink }}>
-            Access code
-          </button>
-        </div>
+        <button onClick={onGuest} style={{ fontSize: "13.5px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "8px 14px", cursor: "pointer", color: C.ink }}>
+          Access your stay
+        </button>
       </header>
 
       <main style={{ maxWidth: "880px", margin: "0 auto", padding: isMobile ? "40px 18px" : "72px 32px" }}>
         <h1 className="fr" style={{ fontSize: isMobile ? "32px" : "46px", fontWeight: 500, lineHeight: 1.15, margin: "0 0 18px" }}>{LANDING.pitch}</h1>
         <p style={{ fontSize: isMobile ? "15px" : "17px", color: C.inkSoft, lineHeight: 1.6, maxWidth: "640px", margin: "0 0 32px" }}>{LANDING.intro}</p>
-        <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "56px" }}>
-          <a href="#reserve" style={{ background: C.clay, color: "#fff", borderRadius: "8px", padding: "12px 20px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
+        <div style={{ marginBottom: "64px" }}>
+          <a href="#reserve" style={{ display: "inline-block", background: C.clay, color: "#fff", borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
             Make a reservation
           </a>
-          <button onClick={onGuest} style={{ background: "none", color: C.ink, border: `1px solid ${C.line}`, borderRadius: "8px", padding: "12px 20px", fontSize: "14.5px", cursor: "pointer" }}>
-            Enter your access code
-          </button>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: "16px", ...sectionStyle }}>
-          {LANDING.features.map((f) => (
-            <div key={f.title} style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "22px" }}>
-              <div className="fr" style={{ fontSize: "18px", fontWeight: 500, marginBottom: "8px" }}>{f.title}</div>
-              <div style={{ fontSize: "14px", color: C.inkSoft, lineHeight: 1.55 }}>{f.text}</div>
-            </div>
-          ))}
         </div>
 
         <section id="reserve" style={{ ...sectionStyle, background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "14px", padding: isMobile ? "22px" : "32px", scrollMarginTop: "80px" }}>
@@ -5092,7 +5070,6 @@ function Landing({ onGuest, onStaff }) {
           </div>
         </section>
 
-        <p style={{ fontSize: "14px", color: C.inkSoft, borderTop: `1px solid ${C.line}`, paddingTop: "24px", margin: 0 }}>{LANDING.audience}</p>
       </main>
 
       <footer style={{ padding: "24px 32px", borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", fontSize: "12.5px", color: C.inkSoft }}>
