@@ -85,6 +85,11 @@ const FONTS = (
       box-shadow: 0 0 0 3px rgba(181,103,58,0.15) !important;
     }
     .resv input, .resv textarea { transition: border-color 150ms ease, box-shadow 150ms ease; }
+    .resv label { color: var(--muted) !important; }
+    .resv input, .resv textarea, .resv select {
+      color: var(--ink) !important; border-color: var(--line) !important; background: transparent !important;
+    }
+    .resv ::placeholder { color: var(--muted) !important; opacity: 1; }
     @media (prefers-reduced-motion: reduce) {
       .rise, .cta, .slide-in { animation: none !important; transition: none !important; }
     }
@@ -5276,7 +5281,7 @@ function Landing({ onGuest, lang, setLang }) {
   const headingStyle = { fontSize: "24px", fontWeight: 500, margin: "0 0 18px" };
 
   return (
-    <div className="ws" dir={rtl ? "rtl" : "ltr"} style={{ minHeight: "100vh", background: C.paper, color: C.ink, "--card": C.paperRaised, "--line": C.line, "--clay": C.clay }}>
+    <div className="ws" dir={rtl ? "rtl" : "ltr"} style={{ minHeight: "100vh", background: C.paper, color: C.ink, "--card": C.paperRaised, "--line": C.line, "--clay": C.clay, "--ink": C.ink, "--muted": C.inkSoft, colorScheme: dark ? "dark" : "light" }}>
       {FONTS}
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", padding: isMobile ? "14px 16px" : "20px 32px", borderBottom: `1px solid ${C.line}`, position: "sticky", top: 0, background: C.paper, zIndex: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
