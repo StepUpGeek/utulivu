@@ -15,19 +15,23 @@ import {
    for NFC tap moments, so the tap interaction reads as the
    one electrified accent against an otherwise calm palette.
 --------------------------------------------------------- */
-const C = {
-  ink: "#16233B",
-  inkSoft: "#3A4459",
-  paper: "#F6F3ED",
-  paperRaised: "#FFFFFF",
-  line: "#E4DFD3",
-  clay: "#B5673A",
-  clayDeep: "#8F4E2A",
-  signal: "#2F9E96",
-  signalSoft: "#DCEFEC",
-  amber: "#C79A3D",
-  red: "#B24C4C",
+const LIGHT_PALETTE = {
+  ink: "#16233B", inkSoft: "#3A4459", paper: "#F6F3ED", paperRaised: "#FFFFFF", line: "#E4DFD3",
+  clay: "#B5673A", clayDeep: "#8F4E2A", signal: "#2F9E96", signalSoft: "#DCEFEC", amber: "#C79A3D", red: "#B24C4C",
+  btnClay: "#8F4E2A", btnTeal: "#1E6E67", signalText: "#1E6E67",
 };
+
+// Dark palette for the landing page. Buttons keep white text, so their
+// backgrounds are chosen to pass contrast in both themes.
+const DARK_PALETTE = {
+  ink: "#F3EFE7", inkSoft: "#AEB6C4", paper: "#121A2B", paperRaised: "#1A2438", line: "#2D3950",
+  clay: "#D08B5F", clayDeep: "#D9966B", signal: "#4DB3AA", signalSoft: "#1F3B3A", amber: "#D9AE5E", red: "#D98585",
+  btnClay: "#9E5A35", btnTeal: "#23807A", signalText: "#7FD1C9",
+};
+
+// Live palette. Landing applies the dark palette while it is shown and
+// restores the light one when it leaves the screen.
+const C = { ...LIGHT_PALETTE };
 
 
 /* ---------------------------------------------------------
@@ -56,7 +60,7 @@ const FONTS = (
     .cta:hover { transform: translateY(-1px); }
     .cta { transition: transform 150ms ease; }
     .intro-card {
-      background: ${C.paperRaised}; border: 1px solid ${C.line}; border-radius: 14px; padding: 24px;
+      background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 24px;
       opacity: 0; transform: translateY(18px);
       transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1), border-color 0.3s ease;
     }
@@ -66,7 +70,7 @@ const FONTS = (
     .intro-row > .intro-card:nth-child(2).floating { animation-delay: 1.4s; }
     .intro-row > .intro-card:nth-child(3).floating { animation-delay: 2.8s; }
     @media (hover: hover) {
-      .intro-card.visible:hover { transform: translateY(-3px); border-color: ${C.clay}; }
+      .intro-card.visible:hover { transform: translateY(-3px); border-color: var(--clay); }
     }
     .intro-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
     @media (max-width: 780px) {
@@ -77,7 +81,7 @@ const FONTS = (
       .intro-card { opacity: 1 !important; transform: none !important; transition: none !important; animation: none !important; translate: none !important; }
     }
     .resv input:focus, .resv textarea:focus, .resv select:focus {
-      outline: none !important; border-color: ${C.clay} !important;
+      outline: none !important; border-color: var(--clay) !important;
       box-shadow: 0 0 0 3px rgba(181,103,58,0.15) !important;
     }
     .resv input, .resv textarea { transition: border-color 150ms ease, box-shadow 150ms ease; }
@@ -5014,7 +5018,7 @@ function LanguageSelect({ lang, setLang, label, style }) {
   );
 }
 
-const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${C.line}`, fontSize: "14px", boxSizing: "border-box", background: "#fff", fontFamily: "inherit" };
+const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${C.line}`, fontSize: "14px", boxSizing: "border-box", background: "transparent", fontFamily: "inherit" };
 const labelStyle = { fontSize: "12.5px", color: C.inkSoft, display: "block", marginBottom: "6px" };
 
 // Public reservation enquiry. Guests give a name, a phone number, an arrival
@@ -5066,7 +5070,7 @@ function ReservationForm({ t, lang }) {
     return (
       <div className="rise" style={{ padding: "8px 0" }}>
         <div style={{ width: "44px", height: "44px", borderRadius: "50%", background: C.signalSoft, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "14px" }}>
-          <Check size={20} color="#1E6E67" />
+          <Check size={20} color={C.signalText} />
         </div>
         <p className="fr" style={{ fontSize: "19px", lineHeight: 1.5, margin: 0 }}>{t.thanks(firstName, f.phone.trim())}</p>
       </div>
@@ -5119,7 +5123,7 @@ function ReservationForm({ t, lang }) {
         <button
           type="submit"
           disabled={!canSend}
-          style={{ background: canSend ? C.clay : C.line, color: canSend ? "#fff" : C.inkSoft, border: "none", borderRadius: "8px", padding: "12px 22px", fontSize: "14.5px", fontWeight: 500, cursor: canSend ? "pointer" : "default", transition: "transform 150ms ease, background 150ms ease" }}
+          style={{ background: canSend ? C.btnClay : C.line, color: canSend ? "#fff" : C.inkSoft, border: "none", borderRadius: "8px", padding: "12px 22px", fontSize: "14.5px", fontWeight: 500, cursor: canSend ? "pointer" : "default", transition: "transform 150ms ease, background 150ms ease" }}
         >
           {sending ? t.sending : t.send}
         </button>
@@ -5230,7 +5234,7 @@ function IntroCards({ t }) {
           return (
             <div key={i} ref={(el) => { refs.current[i] = el; }} className="intro-card">
               <div style={{ width: "40px", height: "40px", borderRadius: "50%", background: C.signalSoft, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "14px" }}>
-                <Icon size={18} color="#1E6E67" />
+                <Icon size={18} color={C.signalText} />
               </div>
               <div className="fr" style={{ fontSize: "20px", lineHeight: 1.25, marginBottom: "6px" }}>{c.title}</div>
               <div style={{ fontSize: "14px", color: C.inkSoft, lineHeight: 1.55 }}>{c.text}</div>
@@ -5242,15 +5246,37 @@ function IntroCards({ t }) {
   );
 }
 
+function useSystemDark() {
+  const [dark, setDark] = useState(() => window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e) => setDark(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  return dark;
+}
+
 function Landing({ onGuest, lang, setLang }) {
   const isMobile = useIsMobile();
+  const systemDark = useSystemDark();
+  const [themeChoice, setThemeChoice] = useState(() => {
+    try { return localStorage.getItem("utulivu_theme") || "system"; } catch (e) { return "system"; }
+  });
+  const dark = themeChoice === "dark" || (themeChoice === "system" && systemDark);
+  // Applied during render so this screen's children read the right colours.
+  Object.assign(C, dark ? DARK_PALETTE : LIGHT_PALETTE);
+  useEffect(() => {
+    try { localStorage.setItem("utulivu_theme", themeChoice); } catch (e) { /* storage unavailable */ }
+  }, [themeChoice]);
+  useEffect(() => () => { Object.assign(C, LIGHT_PALETTE); }, []);
   const t = T[lang];
   const rtl = lang === "ar";
   const sectionStyle = { marginBottom: "56px" };
   const headingStyle = { fontSize: "24px", fontWeight: 500, margin: "0 0 18px" };
 
   return (
-    <div className="ws" dir={rtl ? "rtl" : "ltr"} style={{ minHeight: "100vh", background: C.paper, color: C.ink }}>
+    <div className="ws" dir={rtl ? "rtl" : "ltr"} style={{ minHeight: "100vh", background: C.paper, color: C.ink, "--card": C.paperRaised, "--line": C.line, "--clay": C.clay }}>
       {FONTS}
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", padding: isMobile ? "14px 16px" : "20px 32px", borderBottom: `1px solid ${C.line}`, position: "sticky", top: 0, background: C.paper, zIndex: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
@@ -5258,6 +5284,13 @@ function Landing({ onGuest, lang, setLang }) {
           <span className="fr" style={{ fontSize: isMobile ? "15px" : "18px", fontWeight: 500 }}>{LANDING.name}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <button
+            onClick={() => setThemeChoice(dark ? "light" : "dark")}
+            aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
+            style={{ width: "34px", height: "34px", borderRadius: "8px", border: `1px solid ${C.line}`, background: C.paperRaised, color: C.ink, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+          >
+            {dark ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
           <LanguageSelect lang={lang} setLang={setLang} label="Language" />
           {!isMobile && (
             <button onClick={onGuest} style={{ fontSize: "13.5px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "8px 14px", cursor: "pointer", color: C.ink }}>
@@ -5277,7 +5310,7 @@ function Landing({ onGuest, lang, setLang }) {
           <p style={{ fontSize: isMobile ? "15px" : "17px", color: C.inkSoft, lineHeight: 1.6, maxWidth: "640px", margin: "0 0 32px" }}>{t.intro}</p>
         </div>
         <div className="rise" key={`b-${lang}`} style={{ animationDelay: "0.3s", display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "40px" }}>
-          <a href="#reserve" className="cta" style={{ display: "inline-block", background: C.clayDeep, color: "#fff", borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
+          <a href="#reserve" className="cta" style={{ display: "inline-block", background: C.btnClay, color: "#fff", borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
             {t.reserve}
           </a>
           {isMobile && (
@@ -5313,7 +5346,7 @@ function Landing({ onGuest, lang, setLang }) {
             </div>
 
             <div style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "22px", display: "flex", flexDirection: "column", gap: "10px", justifyContent: "center" }}>
-              <a href={`https://wa.me/${BUSINESS.whatsapp}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: "#1E6E67", color: "#fff", borderRadius: "8px", padding: "13px 16px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
+              <a href={`https://wa.me/${BUSINESS.whatsapp}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: C.btnTeal, color: "#fff", borderRadius: "8px", padding: "13px 16px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
                 <MessageCircle size={17} /> {t.whatsapp}
               </a>
               <a href={`tel:${BUSINESS.phoneDial}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: "none", color: C.ink, border: `1px solid ${C.line}`, borderRadius: "8px", padding: "13px 16px", fontSize: "14.5px", textDecoration: "none" }}>
