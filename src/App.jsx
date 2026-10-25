@@ -61,6 +61,10 @@ const FONTS = (
       transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1), border-color 0.3s ease;
     }
     .intro-card.visible { opacity: 1; transform: none; }
+    @keyframes bob { 0%, 100% { translate: 0 0; } 50% { translate: 0 -4px; } }
+    .intro-card.floating { animation: bob 6s ease-in-out infinite; }
+    .intro-row > .intro-card:nth-child(2).floating { animation-delay: 1.4s; }
+    .intro-row > .intro-card:nth-child(3).floating { animation-delay: 2.8s; }
     @media (hover: hover) {
       .intro-card.visible:hover { transform: translateY(-3px); border-color: ${C.clay}; }
     }
@@ -70,7 +74,7 @@ const FONTS = (
       .intro-row > .intro-card { flex: 0 0 82%; scroll-snap-align: start; }
     }
     @media (prefers-reduced-motion: reduce) {
-      .intro-card { opacity: 1 !important; transform: none !important; transition: none !important; }
+      .intro-card { opacity: 1 !important; transform: none !important; transition: none !important; animation: none !important; translate: none !important; }
     }
     .resv input:focus, .resv textarea:focus, .resv select:focus {
       outline: none !important; border-color: ${C.clay} !important;
@@ -4890,9 +4894,9 @@ const DATE_LOCALE = { en: "en-GB", sw: "sw-TZ" };
 const T = {
   en: {
     welcome: "Welcome to Matondo Guest House",
-    intro: "Your comfort comes first at Matondo Guest House. Reserve your room, follow your stay, and reach our team, all from your phone. We're dedicated to a calm, comfortable stay.",
+    intro: "A calm place to stay, with everything you need on your phone.",
     cards: [
-      { title: "Your comfort first", text: "Your comfort comes first at Matondo Guest House." },
+      { title: "Your comfort first", text: "Every detail is looked after, so you can relax." },
       { title: "Reserve and follow", text: "Reserve your room and follow your stay." },
       { title: "Reach our team", text: "Reach our team, all from your phone." },
     ],
@@ -5187,9 +5191,10 @@ function WelcomeWord() {
   );
 }
 
-// Three cards summarising what the guest can do. They fade in as the visitor
-// scrolls to them, lift slightly under a cursor on computers, and become a
-// swipeable row on phones. Reduced motion shows them straight away.
+// Three cards summarising what the guest can do, set on a soft wave band.
+// Each card fades in as it is reached, then floats very gently while it is
+// on screen and settles once scrolled past. Reduced motion shows the cards
+// and the wave with no movement.
 function IntroCards({ t }) {
   const refs = useRef([]);
   const icons = [Sparkles, CalendarDays, MessageCircle];
@@ -5201,7 +5206,12 @@ function IntroCards({ t }) {
     }
     const io = new IntersectionObserver((entries) => {
       entries.forEach((e) => {
-        if (e.isIntersecting) { e.target.classList.add("visible"); io.unobserve(e.target); }
+        if (e.isIntersecting) {
+          e.target.classList.add("visible");
+          e.target.classList.add("floating");
+        } else {
+          e.target.classList.remove("floating");
+        }
       });
     }, { threshold: 0.2 });
     refs.current.forEach((el) => el && io.observe(el));
@@ -5209,19 +5219,25 @@ function IntroCards({ t }) {
   }, [t]);
 
   return (
-    <div className="intro-row" style={{ marginBottom: "56px" }}>
-      {t.cards.map((c, i) => {
-        const Icon = icons[i];
-        return (
-          <div key={i} ref={(el) => { refs.current[i] = el; }} className="intro-card">
-            <div style={{ width: "40px", height: "40px", borderRadius: "50%", background: C.signalSoft, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "14px" }}>
-              <Icon size={18} color="#1E6E67" />
+    <div style={{ position: "relative", marginBottom: "56px" }}>
+      <svg aria-hidden="true" viewBox="0 0 1200 200" preserveAspectRatio="none"
+        style={{ position: "absolute", left: 0, right: 0, top: "-36px", width: "100%", height: "calc(100% + 72px)", zIndex: 0, pointerEvents: "none" }}>
+        <path d="M0 96 C 200 40, 400 150, 600 96 S 1000 40, 1200 96 L1200 200 L0 200 Z" fill={C.signalSoft} opacity="0.5" />
+      </svg>
+      <div className="intro-row" style={{ position: "relative", zIndex: 1 }}>
+        {t.cards.map((c, i) => {
+          const Icon = icons[i];
+          return (
+            <div key={i} ref={(el) => { refs.current[i] = el; }} className="intro-card">
+              <div style={{ width: "40px", height: "40px", borderRadius: "50%", background: C.signalSoft, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "14px" }}>
+                <Icon size={18} color="#1E6E67" />
+              </div>
+              <div className="fr" style={{ fontSize: "20px", lineHeight: 1.25, marginBottom: "6px" }}>{c.title}</div>
+              <div style={{ fontSize: "14px", color: C.inkSoft, lineHeight: 1.55 }}>{c.text}</div>
             </div>
-            <div className="fr" style={{ fontSize: "20px", lineHeight: 1.25, marginBottom: "6px" }}>{c.title}</div>
-            <div style={{ fontSize: "14px", color: C.inkSoft, lineHeight: 1.55 }}>{c.text}</div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
