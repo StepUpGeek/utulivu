@@ -5277,7 +5277,7 @@ function Landing({ onGuest, lang, setLang }) {
           <p style={{ fontSize: isMobile ? "15px" : "17px", color: C.inkSoft, lineHeight: 1.6, maxWidth: "640px", margin: "0 0 32px" }}>{t.intro}</p>
         </div>
         <div className="rise" key={`b-${lang}`} style={{ animationDelay: "0.3s", display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "40px" }}>
-          <a href="#reserve" className="cta" style={{ display: "inline-block", background: C.clay, color: "#fff", borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
+          <a href="#reserve" className="cta" style={{ display: "inline-block", background: C.clayDeep, color: "#fff", borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
             {t.reserve}
           </a>
           {isMobile && (
@@ -5313,7 +5313,7 @@ function Landing({ onGuest, lang, setLang }) {
             </div>
 
             <div style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "22px", display: "flex", flexDirection: "column", gap: "10px", justifyContent: "center" }}>
-              <a href={`https://wa.me/${BUSINESS.whatsapp}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: C.signal, color: "#fff", borderRadius: "8px", padding: "13px 16px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
+              <a href={`https://wa.me/${BUSINESS.whatsapp}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: "#1E6E67", color: "#fff", borderRadius: "8px", padding: "13px 16px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
                 <MessageCircle size={17} /> {t.whatsapp}
               </a>
               <a href={`tel:${BUSINESS.phoneDial}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: "none", color: C.ink, border: `1px solid ${C.line}`, borderRadius: "8px", padding: "13px 16px", fontSize: "14.5px", textDecoration: "none" }}>
