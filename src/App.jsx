@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
-import { saveCache, loadCache, getQueue, enqueueAction, removeFromQueue, queueCount } from "./offlineStore";
+import { saveCache, loadCache, getQueue, enqueueAction, removeFromQueue, queueCount, QUEUE_FAILED_EVENT } from "./offlineStore";
 import {
   LayoutGrid, CalendarDays, Users, MessageSquareText, Wrench,
   Radio, Wallet, Building2, ChevronDown, ChevronUp, Plus, X, Check, Bell, Menu, Shield,
@@ -90,8 +90,11 @@ const FONTS = (
       color: var(--ink) !important; border-color: var(--line) !important; background: transparent !important;
     }
     .resv ::placeholder { color: var(--muted) !important; opacity: 1; }
+    .expander { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 0.5s cubic-bezier(0.2, 0.7, 0.2, 1), opacity 0.4s ease; }
+    .expander.open { grid-template-rows: 1fr; opacity: 1; }
+    .expander > div { overflow: hidden; min-height: 0; }
     @media (prefers-reduced-motion: reduce) {
-      .rise, .cta, .slide-in { animation: none !important; transition: none !important; }
+      .rise, .cta, .slide-in, .expander { animation: none !important; transition: none !important; }
     }
   `}</style>
 );
@@ -142,9 +145,13 @@ const SIMPLE_STAGE_LABELS = { sent: "Sent", handled: "Handled", received: "Recei
 // so an offline-queued insert doesn't need a follow-up read — which matters
 // now that direct client reads are owner-only (see get_clients() in Supabase).
 function newId() {
-  return typeof crypto !== "undefined" && crypto.randomUUID
-    ? crypto.randomUUID()
-    : "id-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  // Fallback: a standard version-4 UUID, so the database accepts it as a uuid key.
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
 /* Guest access codes and service requests also live in Supabase —
@@ -600,7 +607,7 @@ function requestGroupKey(r) {
   return r.code || `${r.guest_name || "Guest"}::${r.room_number || ""}`;
 }
 
-function RequestCard({ r, onAdvance }) {
+function RequestCard({ r, onAdvance, p = tr(P, "en") }) {
   const isRich = RICH_STAGE_CATEGORIES.includes(r.category);
   const stage = r.stage || "sent";
   return (
@@ -618,39 +625,39 @@ function RequestCard({ r, onAdvance }) {
           {isRich ? (
             <>
               <Pill tone={stage === "confirmed" ? "completed" : stage === "delivered" ? "confirmed" : "pending"}>
-                {RICH_STAGE_LABELS[stage] || stage}
+                {p(stage)}
               </Pill>
               <div style={{ marginTop: "8px" }}>
                 {stage === "sent" && (
                   <button onClick={() => onAdvance(r.id, "preparing")} style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}>
-                    Start preparing
+                    {p("startPreparing")}
                   </button>
                 )}
                 {stage === "preparing" && (
                   <button onClick={() => onAdvance(r.id, "delivered")} style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}>
-                    Mark delivered
+                    {p("markDelivered")}
                   </button>
                 )}
                 {stage === "delivered" && (
-                  <div style={{ fontSize: "11.5px", color: C.inkSoft }}>Awaiting guest confirmation</div>
+                  <div style={{ fontSize: "11.5px", color: C.inkSoft }}>{p("awaitingGuest")}</div>
                 )}
               </div>
             </>
           ) : (
             <>
               {stage === "received" ? (
-                <Pill tone="completed">Received by guest</Pill>
+                <Pill tone="completed">{p("receivedByGuest")}</Pill>
               ) : stage === "handled" ? (
                 <>
                   <Pill tone="pending">Handled</Pill>
-                  <div style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "6px" }}>Awaiting guest confirmation</div>
+                  <div style={{ fontSize: "11.5px", color: C.inkSoft, marginTop: "6px" }}>{p("awaitingGuest")}</div>
                 </>
               ) : (
                 <button
                   onClick={() => onAdvance(r.id, "handled")}
                   style={{ fontSize: "12.5px", border: "none", background: C.signal, color: "#fff", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}
                 >
-                  Mark handled
+                  {p("markHandled")}
                 </button>
               )}
             </>
@@ -667,7 +674,7 @@ function RequestCard({ r, onAdvance }) {
 // list on click. A group with anything still awaiting action stays expanded
 // by default so nothing needing a response gets buried; fully settled
 // groups start collapsed. Clicking a row overrides that default either way.
-function RequestsPanel({ requests, onAdvance }) {
+function RequestsPanel({ requests, onAdvance, p = tr(P, "en") }) {
   const [overrides, setOverrides] = useState({});
 
   const groups = [];
@@ -721,7 +728,7 @@ function RequestsPanel({ requests, onAdvance }) {
             </button>
             {expanded && (
               <div style={{ padding: "0 12px 12px", display: "flex", flexDirection: "column", gap: "10px" }}>
-                {g.items.map((r) => <RequestCard key={r.id} r={r} onAdvance={onAdvance} />)}
+                {g.items.map((r) => <RequestCard key={r.id} r={r} onAdvance={onAdvance} p={p} />)}
               </div>
             )}
           </div>
@@ -1365,6 +1372,12 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest, lang, setLang }) {
   const [syncing, setSyncing] = useState(false);
   const [syncFailures, setSyncFailures] = useState([]);
   const [showSyncFailures, setShowSyncFailures] = useState(false);
+
+  useEffect(() => {
+    const warn = () => alert("This change could not be saved on this device, because the browser's storage is full. Connect to the internet and try again, and tell the owner if this keeps happening.");
+    window.addEventListener(QUEUE_FAILED_EVENT, warn);
+    return () => window.removeEventListener(QUEUE_FAILED_EVENT, warn);
+  }, []);
 
   function applyFetchedData(b, c, s, bk, inv, iq, t, rm, rr, ex, pm) {
     const mapped = {
@@ -2401,26 +2414,26 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest, lang, setLang }) {
 
           {tab === "requests" && (
             <Panel
-              title="Guest requests"
+              title={p("guestRequests")}
               action={
                 canManage && (
                   <button
                     onClick={() => setShowAllRequests((s) => !s)}
                     style={{ fontSize: "12.5px", border: `1px solid ${C.line}`, background: "none", borderRadius: "6px", padding: "6px 12px", cursor: "pointer", color: C.clayDeep }}
                   >
-                    {showAllRequests ? "Show today only" : "View previous days"}
+                    {showAllRequests ? p("showToday") : p("viewPrevious")}
                   </button>
                 )
               }
             >
               <p style={{ fontSize: "13.5px", color: C.inkSoft, marginTop: 0, marginBottom: "18px" }}>
-                Live requests sent from the Guest portal — this list updates automatically, no refresh needed.
+                {p("liveRequests")}
                 {!canManage && " Showing today's requests."}
               </p>
               {visibleRequests.length === 0 ? (
-                <p style={{ fontSize: "13.5px", color: C.inkSoft }}>{showAllRequests ? "No requests found." : "No requests yet today."}</p>
+                <p style={{ fontSize: "13.5px", color: C.inkSoft }}>{showAllRequests ? p("noRequestsFound") : p("noRequestsToday")}</p>
               ) : (
-                <RequestsPanel requests={visibleRequests} onAdvance={advanceRequestStage} />
+                <RequestsPanel requests={visibleRequests} onAdvance={advanceRequestStage} p={p} />
               )}
             </Panel>
           )}
@@ -2563,20 +2576,20 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest, lang, setLang }) {
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(4, 1fr)", gap: "14px" }}>
               {INQUIRY_STAGES.map((stage, colIdx) => (
                 <div key={stage}>
-                  <div style={{ fontSize: "12.5px", fontWeight: 600, color: C.inkSoft, textTransform: "capitalize", marginBottom: "10px" }}>{stage}</div>
+                  <div style={{ fontSize: "12.5px", fontWeight: 600, color: C.inkSoft, textTransform: "capitalize", marginBottom: "10px" }}>{p(stage)}</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                     {bInquiries.filter((i) => i.status === stage).map((iq) => (
                       <div key={iq.id} style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "8px", padding: "12px" }}>
                         <div style={{ fontSize: "13.5px", fontWeight: 500 }}>{clientName(iq.clientId)}</div>
                         <div style={{ fontSize: "13px", color: C.inkSoft, margin: "4px 0 8px" }}>{iq.message}</div>
                         <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                          <button disabled={colIdx === 0} onClick={() => moveInquiry(iq.id, -1)} style={{ fontSize: "12px", border: `1px solid ${C.line}`, background: "none", borderRadius: "5px", padding: "3px 7px", cursor: colIdx === 0 ? "default" : "pointer", opacity: colIdx === 0 ? 0.4 : 1 }}>← back</button>
-                          <button disabled={colIdx === INQUIRY_STAGES.length - 1} onClick={() => moveInquiry(iq.id, 1)} style={{ fontSize: "12px", border: `1px solid ${C.line}`, background: "none", borderRadius: "5px", padding: "3px 7px", cursor: colIdx === 3 ? "default" : "pointer", opacity: colIdx === 3 ? 0.4 : 1 }}>advance →</button>
+                          <button disabled={colIdx === 0} onClick={() => moveInquiry(iq.id, -1)} style={{ fontSize: "12px", border: `1px solid ${C.line}`, background: "none", borderRadius: "5px", padding: "3px 7px", cursor: colIdx === 0 ? "default" : "pointer", opacity: colIdx === 0 ? 0.4 : 1 }}>{p("backArrow")}</button>
+                          <button disabled={colIdx === INQUIRY_STAGES.length - 1} onClick={() => moveInquiry(iq.id, 1)} style={{ fontSize: "12px", border: `1px solid ${C.line}`, background: "none", borderRadius: "5px", padding: "3px 7px", cursor: colIdx === 3 ? "default" : "pointer", opacity: colIdx === 3 ? 0.4 : 1 }}>{p("advanceArrow")}</button>
                           <button
                             onClick={() => { setAddBookingPrefillClientId(iq.clientId); setShowAddBooking(true); }}
                             style={{ fontSize: "12px", border: "none", background: C.signal, color: "#fff", borderRadius: "5px", padding: "3px 8px", cursor: "pointer" }}
                           >
-                            Convert to booking
+                            {p("convertBooking")}
                           </button>
                         </div>
                       </div>
@@ -2944,6 +2957,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest, lang, setLang }) {
               return false;
             }
             const payload = {
+              id: newId(),
               branch_id: branchId,
               client_id: newBooking.clientId,
               room_id: newBooking.roomId || null,
@@ -2983,7 +2997,7 @@ function ProviderApp({ onExit, onGenerateCode, onJumpToGuest, lang, setLang }) {
                 alert("That room is already booked for the selected dates. Please choose a different room or date range.");
                 return false;
               }
-              const tempBookingId = "temp-" + Date.now();
+              const tempBookingId = payload.id; // same ID the server will store, so invoices and payments link up
               enqueueAction({ type: "addBooking", payload, tempId: tempBookingId });
               setPendingCount(queueCount());
               setBookings((prev) => [...prev, { id: tempBookingId, branchId, clientId: newBooking.clientId, roomId: newBooking.roomId, serviceIds: newBooking.serviceIds, checkIn: newBooking.checkIn, checkOut: newBooking.checkOut, checkInTime: newBooking.checkInTime || null, checkOutTime: newBooking.checkOutTime || null, isTemporary: newBooking.isTemporary || false, status: newBooking.status }]);
@@ -4055,7 +4069,7 @@ function GuestRequestStatus({ requests, isExpired, confirmingId, onConfirm, empt
               </div>
             ) : (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "8px" }}>
-                <span style={{ fontSize: "11.5px", color: C.inkSoft }}>{SIMPLE_STAGE_LABELS[stage] || stage}</span>
+                <span style={{ fontSize: "11.5px", color: C.inkSoft }}>{p(stage)}</span>
                 {stage === "handled" && (
                   <button
                     disabled={confirmingId === r.id || isExpired}
@@ -4993,6 +5007,15 @@ const P = {
     payment: "Payment", guestAccess: "Guest access", activeToday: "Active bookings today",
     roomsAvailable: "Rooms available", revenueToday: "Revenue today", outstandingToday: "Outstanding today",
     today: "Today", language: "Language",
+    new: "New", quoted: "Quoted", confirmed: "Confirmed", completed: "Completed",
+    backArrow: "← back", advanceArrow: "advance →", convertBooking: "Convert to booking",
+    guestRequests: "Guest requests",
+    liveRequests: "Live requests sent from the Guest portal — this list updates automatically, no refresh needed.",
+    showToday: "Show today only", viewPrevious: "View previous days",
+    noRequestsToday: "No requests yet today.", noRequestsFound: "No requests found.",
+    sent: "Sent", preparing: "Preparing", delivered: "Delivered", handled: "Handled",
+    startPreparing: "Start preparing", markDelivered: "Mark delivered", markHandled: "Mark handled",
+    awaitingGuest: "Awaiting guest confirmation", receivedByGuest: "Received by guest",
   },
   sw: {
     dashboard: "Dashibodi", requests: "Maombi", bookings: "Nafasi", clients: "Wateja", inquiries: "Maswali",
@@ -5001,6 +5024,15 @@ const P = {
     payment: "Malipo", guestAccess: "Ufikiaji wa mgeni", activeToday: "Nafasi zilizo hai leo",
     roomsAvailable: "Vyumba vilivyo wazi", revenueToday: "Mapato ya leo", outstandingToday: "Deni la leo",
     today: "Leo", language: "Lugha",
+    new: "Mpya", quoted: "Imenukuliwa", confirmed: "Imethibitishwa", completed: "Imekamilika",
+    backArrow: "← rudi", advanceArrow: "songa mbele →", convertBooking: "Badilisha kuwa nafasi",
+    guestRequests: "Maombi ya wageni",
+    liveRequests: "Maombi yanayotumwa kutoka ukurasa wa wageni — orodha hii inasasishwa yenyewe, bila kuonyesha upya.",
+    showToday: "Onyesha ya leo pekee", viewPrevious: "Angalia siku zilizopita",
+    noRequestsToday: "Hakuna maombi leo bado.", noRequestsFound: "Hakuna maombi yaliyopatikana.",
+    sent: "Imetumwa", preparing: "Inaandaliwa", delivered: "Imewasilishwa", handled: "Imeshughulikiwa",
+    startPreparing: "Anza kuandaa", markDelivered: "Thibitisha imewasilishwa", markHandled: "Thibitisha imeshughulikiwa",
+    awaitingGuest: "Inasubiri uthibitisho wa mgeni", receivedByGuest: "Imepokelewa na mgeni",
   },
 };
 
@@ -5091,7 +5123,7 @@ function ReservationForm({ t, lang }) {
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "14px" }}>
         <div>
           <label style={labelStyle}>{t.name} *</label>
-          <input style={inputStyle} value={f.name} onChange={set("name")} placeholder="e.g. Halima Juma" />
+          <input id="resv-name" style={inputStyle} value={f.name} onChange={set("name")} placeholder="e.g. Halima Juma" />
         </div>
         <div>
           <label style={labelStyle}>{t.phone} *</label>
@@ -5269,6 +5301,15 @@ function Landing({ onGuest, lang, setLang }) {
     try { return localStorage.getItem("utulivu_theme") || "system"; } catch (e) { return "system"; }
   });
   const dark = themeChoice === "dark" || (themeChoice === "system" && systemDark);
+  const [resOpen, setResOpen] = useState(false);
+  const [addrOpen, setAddrOpen] = useState(false);
+  function openReserve() {
+    setResOpen(true);
+    setTimeout(() => {
+      document.getElementById("reserve")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.getElementById("resv-name")?.focus({ preventScroll: true });
+    }, 350);
+  }
   // Applied during render so this screen's children read the right colours.
   Object.assign(C, dark ? DARK_PALETTE : LIGHT_PALETTE);
   useEffect(() => {
@@ -5315,9 +5356,9 @@ function Landing({ onGuest, lang, setLang }) {
           <p style={{ fontSize: isMobile ? "15px" : "17px", color: C.inkSoft, lineHeight: 1.6, maxWidth: "640px", margin: "0 0 32px" }}>{t.intro}</p>
         </div>
         <div className="rise" key={`b-${lang}`} style={{ animationDelay: "0.3s", display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "40px" }}>
-          <a href="#reserve" className="cta" style={{ display: "inline-block", background: C.btnClay, color: "#fff", borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
+          <button onClick={openReserve} aria-expanded={resOpen} aria-controls="reserve" className="cta" style={{ display: "inline-block", background: C.btnClay, color: "#fff", border: "none", borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", fontWeight: 500, cursor: "pointer" }}>
             {t.reserve}
-          </a>
+          </button>
           {isMobile && (
             <button onClick={onGuest} style={{ background: "none", color: C.ink, border: `1px solid ${C.line}`, borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", cursor: "pointer" }}>
               {t.access}
@@ -5326,30 +5367,32 @@ function Landing({ onGuest, lang, setLang }) {
         </div>
 
         <IntroCards t={t} />
-        <section id="reserve" style={{ ...sectionStyle, background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "14px", padding: isMobile ? "22px" : "32px", scrollMarginTop: "80px" }}>
+        <div className={`expander ${resOpen ? "open" : ""}`} id="reserve" aria-hidden={!resOpen}><div>
+        <section style={{ ...sectionStyle, background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "14px", padding: isMobile ? "22px" : "32px", scrollMarginTop: "80px" }}>
           <h2 className="fr" style={headingStyle}>{t.formTitle}</h2>
           <p style={{ fontSize: "14px", color: C.inkSoft, margin: "-8px 0 22px", lineHeight: 1.55 }}>{t.formIntro}</p>
           <ReservationForm t={t} lang={lang} />
         </section>
+        </div></div>
 
         <section style={sectionStyle}>
           <h2 className="fr" style={headingStyle}>{t.getInTouch}</h2>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "16px" }}>
-            <div style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "22px", display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", color: C.clayDeep }}>
-                <MapPin size={16} />
-                <span style={{ fontSize: "11.5px", textTransform: "uppercase", letterSpacing: "0.06em", color: C.inkSoft }}>{t.address}</span>
-              </div>
-              <div className="fr" style={{ fontSize: "19px", fontWeight: 500, lineHeight: 1.35 }}>{BUSINESS.address}</div>
-              {(BUSINESS.checkInTime || BUSINESS.checkOutTime) && (
-                <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px", color: C.inkSoft }}>
-                  {BUSINESS.checkInTime && <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><Clock size={13} /> {BUSINESS.checkInTime}</span>}
-                  {BUSINESS.checkOutTime && <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><Clock size={13} /> {BUSINESS.checkOutTime}</span>}
-                </div>
-              )}
-              <a href={BUSINESS.mapsUrl} target="_blank" rel="noopener noreferrer" style={{ marginTop: "auto", fontSize: "13.5px", color: C.clayDeep, textDecoration: "none" }}>{t.openMaps}</a>
+            <div style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "18px 22px", alignSelf: "start" }}>
+              <button onClick={() => setAddrOpen((o) => !o)} aria-expanded={addrOpen} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", background: "none", border: "none", padding: 0, cursor: "pointer", color: C.ink }}>
+                <span style={{ display: "flex", alignItems: "center", gap: "8px", color: C.clayDeep }}>
+                  <MapPin size={16} />
+                  <span style={{ fontSize: "11.5px", textTransform: "uppercase", letterSpacing: "0.06em", color: C.inkSoft }}>{t.address}</span>
+                </span>
+                {addrOpen ? <ChevronUp size={18} color={C.inkSoft} /> : <ChevronDown size={18} color={C.inkSoft} />}
+              </button>
+              <div className={`expander ${addrOpen ? "open" : ""}`}><div>
+                <div className="fr" style={{ fontSize: "19px", fontWeight: 500, lineHeight: 1.35, marginTop: "14px" }}>{BUSINESS.address}</div>
+                {BUSINESS.checkInTime && <div style={{ fontSize: "13px", color: C.inkSoft, marginTop: "8px" }}>{BUSINESS.checkInTime}</div>}
+                {BUSINESS.checkOutTime && <div style={{ fontSize: "13px", color: C.inkSoft, marginTop: "4px" }}>{BUSINESS.checkOutTime}</div>}
+                <a href={BUSINESS.mapsUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: "12px", fontSize: "13.5px", color: C.clayDeep, textDecoration: "none" }}>{t.openMaps}</a>
+              </div></div>
             </div>
-
             <div style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "22px", display: "flex", flexDirection: "column", gap: "10px", justifyContent: "center" }}>
               <a href={`https://wa.me/${BUSINESS.whatsapp}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: C.btnTeal, color: "#fff", borderRadius: "8px", padding: "13px 16px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
                 <MessageCircle size={17} /> {t.whatsapp}

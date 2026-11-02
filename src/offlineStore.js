@@ -6,16 +6,21 @@
    2. Queue up any change (new booking, new client, status
       update...) made while offline, so it can be replayed
       against Supabase the moment connectivity comes back.
+
+   If a change cannot be saved to the queue (for example the
+   browser's storage is full), the app is told through a window
+   event, so staff are warned instead of the change vanishing.
 --------------------------------------------------------- */
 
 const CACHE_KEY = "utulivu_cache_v1";
 const QUEUE_KEY = "utulivu_pending_v1";
+export const QUEUE_FAILED_EVENT = "utulivu-queue-failed";
 
 export function saveCache(data) {
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify({ ...data, cachedAt: Date.now() }));
   } catch (e) {
-    // storage full or unavailable — the app still works online, just without an offline copy
+    // storage full or unavailable: the app still works online, just without an offline copy
   }
 }
 
@@ -37,11 +42,13 @@ export function getQueue() {
   }
 }
 
+// Returns true only if the queue was written to storage.
 function saveQueue(queue) {
   try {
     localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+    return true;
   } catch (e) {
-    // ignore — best effort
+    return false;
   }
 }
 
@@ -49,7 +56,11 @@ export function enqueueAction(action) {
   const queue = getQueue();
   const withId = { ...action, id: "pending-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8), createdAt: Date.now() };
   queue.push(withId);
-  saveQueue(queue);
+  if (!saveQueue(queue)) {
+    // The change is NOT saved. Tell the app so staff know to act.
+    try { window.dispatchEvent(new Event(QUEUE_FAILED_EVENT)); } catch (e) { /* no window */ }
+    return null;
+  }
   return withId;
 }
 
