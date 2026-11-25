@@ -5239,6 +5239,17 @@ function WelcomeWord() {
   );
 }
 
+function useSystemDark() {
+  const [dark, setDark] = useState(() => window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e) => setDark(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  return dark;
+}
+
 function Landing({ onGuest, lang, setLang }) {
   const isMobile = useIsMobile();
   const systemDark = useSystemDark();
