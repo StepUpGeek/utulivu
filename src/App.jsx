@@ -4924,13 +4924,13 @@ const DATE_LOCALE = { en: "en-GB", sw: "sw-TZ" };
 const T = {
   en: {
     welcome: "Welcome to Matondo Guest House",
-    intro: "We're glad you're here. Plan your stay and reach us, all from your phone.",
+    intro: "We're glad you're here. Book your room and reach us, all from your phone.",
     cards: [
       { title: "Your comfort first", text: "Every detail is looked after, so you can relax." },
       { title: "Reserve and follow", text: "Reserve your room and follow your stay." },
       { title: "Reach our team", text: "Reach our team, all from your phone." },
     ],
-    reserve: "Plan your stay", access: "Access your stay",
+    reserve: "Book a room", access: "Guest sign-in",
     getInTouch: "Get in touch", address: "Address", openMaps: "Open in Google Maps →",
     whatsapp: "Message on WhatsApp", call: "Call",
     formTitle: "Tell us your dates", formIntro: "Share your dates and we'll call you to confirm.",
@@ -4942,13 +4942,13 @@ const T = {
   },
   sw: {
     welcome: "Karibu Matondo Guest House",
-    intro: "Karibu sana. Panga ukaaji wako na tufikie, kwa simu yako pekee.",
+    intro: "Karibu sana. Weka nafasi ya chumba chako na tufikie, kwa simu yako pekee.",
     cards: [
       { title: "Faraja yako kwanza", text: "Faraja yako ndiyo kipaumbele chetu katika Matondo Guest House." },
       { title: "Weka nafasi na ufuatilie", text: "Weka nafasi ya chumba chako na ufuatilie ukaaji wako." },
       { title: "Fikia timu yetu", text: "Wasiliana na timu yetu, kwa simu yako pekee." },
     ],
-    reserve: "Panga ukaaji wako", access: "Ingia kwenye ukaaji wako",
+    reserve: "Weka nafasi ya chumba", access: "Ingia kama mgeni",
     getInTouch: "Wasiliana nasi", address: "Anwani", openMaps: "Fungua Ramani za Google →",
     whatsapp: "Tuma ujumbe WhatsApp", call: "Piga simu",
     formTitle: "Tuambie tarehe zako", formIntro: "Tuambie tarehe zako, nasi tutakupigia simu kuthibitisha.",
@@ -5211,43 +5211,12 @@ function ReservationRequestsPanel({ rows, onStatus }) {
   );
 }
 
-// Cycles the greeting through five languages, with the matching language
-// name highlighted in a row beneath it. Each greeting carries its own
-// exclamation mark, as greetings usually do in that language. Visitors with
-// reduced motion turned on see the English greeting, with no cycling.
-const WELCOME_WORDS = [
-  { w: "Karibu!", dir: "ltr", name: "Kiswahili" },
-  { w: "Welcome!", dir: "ltr", name: "English" },
-  { w: "Bienvenue!", dir: "ltr", name: "Français" },
-  { w: "مرحبا!", dir: "rtl", name: "العربية" },
-  { w: "欢迎！", dir: "ltr", name: "中文" },
-];
-
+// The greeting, shown on its own. Karibu is the home-language welcome for
+// guests in Kahama; the language menu still lets visitors switch to English.
 function WelcomeWord() {
-  const [i, setI] = useState(0);
-  useEffect(() => {
-    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduce) return;
-    const id = setInterval(() => setI((p) => (p + 1) % WELCOME_WORDS.length), 4000);
-    return () => clearInterval(id);
-  }, []);
-  const item = WELCOME_WORDS[i];
   return (
-    <div>
-      <div key={i} className={`slide-in${item.dir === "rtl" ? " slide-in-rtl" : ""} fr`} dir={item.dir} style={{ display: "inline-block", fontSize: "inherit" }}>{item.w}</div>
-    </div>
+    <div className="rise fr" style={{ display: "inline-block" }}>Karibu!</div>
   );
-}
-
-function useSystemDark() {
-  const [dark, setDark] = useState(() => window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = (e) => setDark(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-  return dark;
 }
 
 function Landing({ onGuest, lang, setLang }) {
@@ -5258,7 +5227,6 @@ function Landing({ onGuest, lang, setLang }) {
   });
   const dark = themeChoice === "dark" || (themeChoice === "system" && systemDark);
   const [resOpen, setResOpen] = useState(false);
-  const [addrOpen, setAddrOpen] = useState(false);
   function openReserve() {
     setResOpen(true);
     setTimeout(() => {
@@ -5333,21 +5301,19 @@ function Landing({ onGuest, lang, setLang }) {
         <section style={sectionStyle}>
           <h2 className="fr" style={headingStyle}>{t.getInTouch}</h2>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "16px" }}>
-            <div style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "18px 22px", alignSelf: "start" }}>
-              <button onClick={() => setAddrOpen((o) => !o)} aria-expanded={addrOpen} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", background: "none", border: "none", padding: 0, cursor: "pointer", color: C.ink }}>
-                <span style={{ display: "flex", alignItems: "center", gap: "8px", color: C.clayDeep }}>
+            <a href={BUSINESS.mapsUrl} target="_blank" rel="noopener noreferrer" aria-label={`${t.openMaps} ${BUSINESS.address}`} style={{ display: "block", background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", overflow: "hidden", textDecoration: "none", color: C.ink, alignSelf: "start" }}>
+              <img src="/guesthouse-map.png" alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} style={{ width: "100%", height: "160px", objectFit: "cover", display: "block" }} />
+              <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", color: C.clayDeep }}>
                   <MapPin size={16} />
                   <span style={{ fontSize: "11.5px", textTransform: "uppercase", letterSpacing: "0.06em", color: C.inkSoft }}>{t.address}</span>
-                </span>
-                {addrOpen ? <ChevronUp size={18} color={C.inkSoft} /> : <ChevronDown size={18} color={C.inkSoft} />}
-              </button>
-              <div className={`expander ${addrOpen ? "open" : ""}`}><div>
-                <div className="fr" style={{ fontSize: "19px", fontWeight: 500, lineHeight: 1.35, marginTop: "14px" }}>{BUSINESS.address}</div>
-                {BUSINESS.checkInTime && <div style={{ fontSize: "13px", color: C.inkSoft, marginTop: "8px" }}>{BUSINESS.checkInTime}</div>}
-                {BUSINESS.checkOutTime && <div style={{ fontSize: "13px", color: C.inkSoft, marginTop: "4px" }}>{BUSINESS.checkOutTime}</div>}
-                <a href={BUSINESS.mapsUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: "12px", fontSize: "13.5px", color: C.clayDeep, textDecoration: "none" }}>{t.openMaps}</a>
-              </div></div>
-            </div>
+                </div>
+                <div className="fr" style={{ fontSize: "19px", fontWeight: 500, lineHeight: 1.35 }}>{BUSINESS.address}</div>
+                {BUSINESS.checkInTime && <div style={{ fontSize: "13px", color: C.inkSoft }}>{BUSINESS.checkInTime}</div>}
+                {BUSINESS.checkOutTime && <div style={{ fontSize: "13px", color: C.inkSoft }}>{BUSINESS.checkOutTime}</div>}
+                <span style={{ fontSize: "13.5px", color: C.clayDeep, marginTop: "4px" }}>{t.openMaps} →</span>
+              </div>
+            </a>
             <div style={{ background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "12px", padding: "22px", display: "flex", flexDirection: "column", gap: "10px", justifyContent: "center" }}>
               <a href={`https://wa.me/${BUSINESS.whatsapp}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: C.btnTeal, color: "#fff", borderRadius: "8px", padding: "13px 16px", fontSize: "14.5px", fontWeight: 500, textDecoration: "none" }}>
                 <MessageCircle size={17} /> {t.whatsapp}
