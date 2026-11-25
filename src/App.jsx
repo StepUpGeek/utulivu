@@ -4942,7 +4942,7 @@ const T = {
   },
   sw: {
     welcome: "Karibu Matondo Guest House",
-    intro: "Karibu sana. Weka nafasi ya chumba chako na tufikie, kwa simu yako pekee.",
+    intro: "Karibu Matondo Guest House. Sasa unaweza kuweka nafasi ya chumba na kuagiza huduma zetu kupitia simu yako, ni rahisi sana.",
     cards: [
       { title: "Faraja yako kwanza", text: "Faraja yako ndiyo kipaumbele chetu katika Matondo Guest House." },
       { title: "Weka nafasi na ufuatilie", text: "Weka nafasi ya chumba chako na ufuatilie ukaaji wako." },
@@ -5273,11 +5273,10 @@ function Landing({ onGuest, lang, setLang }) {
             {dark ? <Sun size={15} /> : <Moon size={15} />}
           </button>
           <LanguageSelect lang={lang} setLang={setLang} label="Language" />
-          {!isMobile && (
-            <button onClick={onGuest} style={{ fontSize: "13.5px", border: `1px solid ${C.line}`, background: C.paperRaised, borderRadius: "8px", padding: "8px 14px", cursor: "pointer", color: C.ink }}>
-              {t.access}
-            </button>
-          )}
+            <button onClick={onGuest} style={{ fontSize: "13.5px", background: "none", border: "none", color: C.inkSoft, textDecoration: "underline", textUnderlineOffset: "3px", padding: "8px 4px", cursor: "pointer" }}>
+            {t.access}
+          </button>
+
         </div>
       </header>
 
@@ -5294,11 +5293,7 @@ function Landing({ onGuest, lang, setLang }) {
           <button onClick={openReserve} aria-expanded={resOpen} aria-controls="reserve" className="cta" style={{ display: "inline-block", background: C.btnClay, color: "#fff", border: "none", borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", fontWeight: 500, cursor: "pointer" }}>
             {t.reserve}
           </button>
-          {isMobile && (
-            <button onClick={onGuest} style={{ background: "none", color: C.ink, border: `1px solid ${C.line}`, borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", cursor: "pointer" }}>
-              {t.access}
-            </button>
-          )}
+          
         </div>
 
         <div className={`expander ${resOpen ? "open" : ""}`} id="reserve" aria-hidden={!resOpen}><div>
