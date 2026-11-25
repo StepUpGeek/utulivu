@@ -23,6 +23,13 @@ const LIGHT_PALETTE = {
 
 // Dark palette for the landing page. Buttons keep white text, so their
 // backgrounds are chosen to pass contrast in both themes.
+// Warm light palette for the landing page: cream, warm charcoal and linen tones.
+// Staff screens keep LIGHT_PALETTE, so this change does not reach them.
+const LANDING_LIGHT = {
+  ...LIGHT_PALETTE,
+  ink: "#2E2A26", inkSoft: "#6B635B", paper: "#F5EFE4", paperRaised: "#FBF8F3", line: "#E6DCCB",
+};
+
 const DARK_PALETTE = {
   ink: "#F3EFE7", inkSoft: "#AEB6C4", paper: "#121A2B", paperRaised: "#1A2438", line: "#2D3950",
   clay: "#D08B5F", clayDeep: "#D9966B", signal: "#4DB3AA", signalSoft: "#1F3B3A", amber: "#D9AE5E", red: "#D98585",
@@ -4917,16 +4924,16 @@ const DATE_LOCALE = { en: "en-GB", sw: "sw-TZ" };
 const T = {
   en: {
     welcome: "Welcome to Matondo Guest House",
-    intro: "A calm place to stay, with everything you need on your phone.",
+    intro: "We're glad you're here. Plan your stay and reach us, all from your phone.",
     cards: [
       { title: "Your comfort first", text: "Every detail is looked after, so you can relax." },
       { title: "Reserve and follow", text: "Reserve your room and follow your stay." },
       { title: "Reach our team", text: "Reach our team, all from your phone." },
     ],
-    reserve: "Make a reservation", access: "Access your stay",
+    reserve: "Plan your stay", access: "Access your stay",
     getInTouch: "Get in touch", address: "Address", openMaps: "Open in Google Maps →",
     whatsapp: "Message on WhatsApp", call: "Call",
-    formTitle: "Make a reservation", formIntro: "Tell us when you'd like to stay. We'll call you to confirm.",
+    formTitle: "Tell us your dates", formIntro: "Share your dates and we'll call you to confirm.",
     name: "Your name", phone: "Phone or WhatsApp", arriving: "Arriving", nights: "Number of nights",
     leaving: "Leaving", note: "Anything we should know? (optional)", notePh: "Arrival time, special requests…",
     send: "Send reservation request", sending: "Sending…", required: "* required. We confirm by phone.",
@@ -4935,16 +4942,16 @@ const T = {
   },
   sw: {
     welcome: "Karibu Matondo Guest House",
-    intro: "Mahali pa utulivu pa kukaa, chenye kila unachohitaji kwenye simu yako.",
+    intro: "Karibu sana. Panga ukaaji wako na tufikie, kwa simu yako pekee.",
     cards: [
       { title: "Faraja yako kwanza", text: "Faraja yako ndiyo kipaumbele chetu katika Matondo Guest House." },
       { title: "Weka nafasi na ufuatilie", text: "Weka nafasi ya chumba chako na ufuatilie ukaaji wako." },
       { title: "Fikia timu yetu", text: "Wasiliana na timu yetu, kwa simu yako pekee." },
     ],
-    reserve: "Weka nafasi", access: "Ingia kwenye ukaaji wako",
+    reserve: "Panga ukaaji wako", access: "Ingia kwenye ukaaji wako",
     getInTouch: "Wasiliana nasi", address: "Anwani", openMaps: "Fungua Ramani za Google →",
     whatsapp: "Tuma ujumbe WhatsApp", call: "Piga simu",
-    formTitle: "Weka nafasi", formIntro: "Tuambie unapotaka kukaa. Tutakupigia simu kuthibitisha.",
+    formTitle: "Tuambie tarehe zako", formIntro: "Tuambie tarehe zako, nasi tutakupigia simu kuthibitisha.",
     name: "Jina lako", phone: "Simu au WhatsApp", arriving: "Unawasili", nights: "Idadi ya usiku",
     leaving: "Unaondoka", note: "Kuna jambo la kujua? (si lazima)", notePh: "Muda wa kufika, maombi maalum…",
     send: "Tuma ombi la nafasi", sending: "Inatuma…", required: "* lazima. Tunathibitisha kwa simu.",
@@ -5055,8 +5062,8 @@ function LanguageSelect({ lang, setLang, label, style }) {
   );
 }
 
-const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${C.line}`, fontSize: "14px", boxSizing: "border-box", background: "transparent", fontFamily: "inherit" };
-const labelStyle = { fontSize: "12.5px", color: C.inkSoft, display: "block", marginBottom: "6px" };
+const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${C.line}`, fontSize: "16px", boxSizing: "border-box", background: "transparent", fontFamily: "inherit" };
+const labelStyle = { fontSize: "13px", color: C.inkSoft, display: "block", marginBottom: "6px" };
 
 // Public reservation enquiry. Guests give a name, a phone number, an arrival
 // date and how many nights. The check-out date is worked out from those, so
@@ -5209,8 +5216,8 @@ function ReservationRequestsPanel({ rows, onStatus }) {
 // exclamation mark, as greetings usually do in that language. Visitors with
 // reduced motion turned on see the English greeting, with no cycling.
 const WELCOME_WORDS = [
-  { w: "Welcome!", dir: "ltr", name: "English" },
   { w: "Karibu!", dir: "ltr", name: "Kiswahili" },
+  { w: "Welcome!", dir: "ltr", name: "English" },
   { w: "Bienvenue!", dir: "ltr", name: "Français" },
   { w: "مرحبا!", dir: "rtl", name: "العربية" },
   { w: "欢迎！", dir: "ltr", name: "中文" },
@@ -5221,7 +5228,7 @@ function WelcomeWord() {
   useEffect(() => {
     const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduce) return;
-    const id = setInterval(() => setI((p) => (p + 1) % WELCOME_WORDS.length), 2200);
+    const id = setInterval(() => setI((p) => (p + 1) % WELCOME_WORDS.length), 4000);
     return () => clearInterval(id);
   }, []);
   const item = WELCOME_WORDS[i];
@@ -5230,68 +5237,6 @@ function WelcomeWord() {
       <div key={i} className={`slide-in${item.dir === "rtl" ? " slide-in-rtl" : ""} fr`} dir={item.dir} style={{ display: "inline-block", fontSize: "inherit" }}>{item.w}</div>
     </div>
   );
-}
-
-// Three cards summarising what the guest can do, set on a soft wave band.
-// Each card fades in as it is reached, then floats very gently while it is
-// on screen and settles once scrolled past. Reduced motion shows the cards
-// and the wave with no movement.
-function IntroCards({ t }) {
-  const refs = useRef([]);
-  const icons = [Sparkles, CalendarDays, MessageCircle];
-  useEffect(() => {
-    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduce || !("IntersectionObserver" in window)) {
-      refs.current.forEach((el) => el && el.classList.add("visible"));
-      return;
-    }
-    const io = new IntersectionObserver((entries) => {
-      entries.forEach((e) => {
-        if (e.isIntersecting) {
-          e.target.classList.add("visible");
-          e.target.classList.add("floating");
-        } else {
-          e.target.classList.remove("floating");
-        }
-      });
-    }, { threshold: 0.2 });
-    refs.current.forEach((el) => el && io.observe(el));
-    return () => io.disconnect();
-  }, [t]);
-
-  return (
-    <div style={{ position: "relative", marginBottom: "56px" }}>
-      <svg aria-hidden="true" viewBox="0 0 1200 200" preserveAspectRatio="none"
-        style={{ position: "absolute", left: 0, right: 0, top: "-36px", width: "100%", height: "calc(100% + 72px)", zIndex: 0, pointerEvents: "none" }}>
-        <path d="M0 96 C 200 40, 400 150, 600 96 S 1000 40, 1200 96 L1200 200 L0 200 Z" fill={C.signalSoft} opacity="0.5" />
-      </svg>
-      <div className="intro-row" style={{ position: "relative", zIndex: 1 }}>
-        {t.cards.map((c, i) => {
-          const Icon = icons[i];
-          return (
-            <div key={i} ref={(el) => { refs.current[i] = el; }} className="intro-card">
-              <div style={{ width: "40px", height: "40px", borderRadius: "50%", background: C.signalSoft, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "14px" }}>
-                <Icon size={18} color={C.signalText} />
-              </div>
-              <div className="fr" style={{ fontSize: "20px", lineHeight: 1.25, marginBottom: "6px" }}>{c.title}</div>
-              <div style={{ fontSize: "14px", color: C.inkSoft, lineHeight: 1.55 }}>{c.text}</div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function useSystemDark() {
-  const [dark, setDark] = useState(() => window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = (e) => setDark(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-  return dark;
 }
 
 function Landing({ onGuest, lang, setLang }) {
@@ -5311,7 +5256,7 @@ function Landing({ onGuest, lang, setLang }) {
     }, 350);
   }
   // Applied during render so this screen's children read the right colours.
-  Object.assign(C, dark ? DARK_PALETTE : LIGHT_PALETTE);
+  Object.assign(C, dark ? DARK_PALETTE : LANDING_LIGHT);
   useEffect(() => {
     try { localStorage.setItem("utulivu_theme", themeChoice); } catch (e) { /* storage unavailable */ }
   }, [themeChoice]);
@@ -5353,7 +5298,7 @@ function Landing({ onGuest, lang, setLang }) {
           </div>
         </div>
         <div className="rise" key={`i-${lang}`} style={{ animationDelay: "0.15s" }}>
-          <p style={{ fontSize: isMobile ? "15px" : "17px", color: C.inkSoft, lineHeight: 1.6, maxWidth: "640px", margin: "0 0 32px" }}>{t.intro}</p>
+          <p style={{ fontSize: isMobile ? "16px" : "17px", color: C.inkSoft, lineHeight: 1.7, maxWidth: "640px", margin: "0 0 32px" }}>{t.intro}</p>
         </div>
         <div className="rise" key={`b-${lang}`} style={{ animationDelay: "0.3s", display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "40px" }}>
           <button onClick={openReserve} aria-expanded={resOpen} aria-controls="reserve" className="cta" style={{ display: "inline-block", background: C.btnClay, color: "#fff", border: "none", borderRadius: "8px", padding: "13px 22px", fontSize: "14.5px", fontWeight: 500, cursor: "pointer" }}>
@@ -5366,7 +5311,6 @@ function Landing({ onGuest, lang, setLang }) {
           )}
         </div>
 
-        <IntroCards t={t} />
         <div className={`expander ${resOpen ? "open" : ""}`} id="reserve" aria-hidden={!resOpen}><div>
         <section style={{ ...sectionStyle, background: C.paperRaised, border: `1px solid ${C.line}`, borderRadius: "14px", padding: isMobile ? "22px" : "32px", scrollMarginTop: "80px" }}>
           <h2 className="fr" style={headingStyle}>{t.formTitle}</h2>
@@ -5512,7 +5456,11 @@ function wantsPicker() {
 
 export default function App() {
   const [lang, setLang] = useState(() => {
-    try { return localStorage.getItem("utulivu_lang") || "en"; } catch (e) { return "en"; }
+    try {
+      const saved = localStorage.getItem("utulivu_lang");
+      if (saved) return saved;
+    } catch (e) { /* storage unavailable: fall through to the device language */ }
+    return (navigator.language || "").toLowerCase().startsWith("sw") ? "sw" : "en";
   });
   useEffect(() => {
     try { localStorage.setItem("utulivu_lang", lang); } catch (e) { /* storage unavailable: keep current session only */ }
